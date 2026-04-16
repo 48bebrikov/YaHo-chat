@@ -19,20 +19,12 @@ SYSTEM_PROMPT = """Вы - искусственный интеллект, ими�
 
 def get_gemini_model():
     """Returns a configured Gemini model instance with tools."""
-    # The user asked for Gemini 3 Flash. We will try to use the latest model tag.
-    try:
-         model = genai.GenerativeModel(
-             model_name='models/gemini-3.1-flash',
-             tools=[search_internet, search_youtube, search_saved_news],
-             system_instruction=SYSTEM_PROMPT
-         )
-    except Exception:
-         # Fallback to older ones if the specific version string fails later
-         model = genai.GenerativeModel(
-             model_name='gemini-3-flash',
-             tools=[search_internet, search_youtube, search_saved_news],
-             system_instruction=SYSTEM_PROMPT
-         )
+    # Use gemini-1.5-flash since 3.1 flash is not fully supported in the REST API v1beta yet.
+    model = genai.GenerativeModel(
+        model_name='gemini-3.1-flash-lite-preview',
+        tools=[search_internet, search_youtube, search_saved_news],
+        system_instruction=SYSTEM_PROMPT
+    )
     return model
 
 def generate_reply(user_id: str, message: str) -> str:
