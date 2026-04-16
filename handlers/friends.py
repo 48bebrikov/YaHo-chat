@@ -40,6 +40,9 @@ def register_friend_handlers(client, friends_list: list[str]):
         logger.info(f"Received message from friend {user_id}: {text[:30]}...")
 
         try:
+            # Mark message as read
+            await client.send_read_acknowledge(event.chat_id)
+            
             # Tell telegram we are typing...
             action = 'typing' if not media_path else 'document'
             async with client.action(event.chat_id, action):
