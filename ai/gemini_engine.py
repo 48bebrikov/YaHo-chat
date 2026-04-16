@@ -57,7 +57,12 @@ def generate_reply(user_id: str, message: str, media_path: str = None) -> str:
     
     # Using generate_content instead of start_chat to avoid potential blocking issues
     # with automatic function calling loops in older SDK versions
-    response = model.generate_content(prompt)
+    # We can explicitly allow the model to use tools if it thinks it's needed
+    response = model.generate_content(
+        prompt,
+        # tool_config can be uncommented to force ANY tool, but AUTO is default and usually fine
+        # tool_config={'function_calling_config': {'mode': 'AUTO'}} 
+    )
     
     # If the model decided to call a function, response.parts will contain function_call
     # We will handle basic function calling here
