@@ -3,8 +3,12 @@ from ai.gemini_engine import generate_reply
 from database.sqlite_db import get_db_session, UserMetadata
 import logging
 from datetime import datetime
+import asyncio
 
 logger = logging.getLogger(__name__)
+
+# Global buffer to store incoming messages
+message_buffers = {}
 
 def register_friend_handlers(client, friends_list: list[str]):
     if not friends_list or friends_list == [""]:
@@ -23,12 +27,15 @@ def register_friend_handlers(client, friends_list: list[str]):
 
         user_id = sender_id # consistently use ID for Qdrant storage
         
-        # Check if it's media or text
+        # Add to buffer to aggregate multiple fast messages
+        global message_buffers
+        if user_id not in message_buffers:
+            message_buffers[user_id] = []
+            
         text = event.text or ""
         media_path = None
         
         if event.photo:
-            # We skip downloading huge files, but let's download photos to send to Gemini
             logger.info("Received a photo, downloading...")
             media_path = await event.download_media(file="database/")
             if not text:
@@ -36,8 +43,50 @@ def register_friend_handlers(client, friends_list: list[str]):
 
         if not text and not media_path:
             return
+            
+        message_buffers[user_id].append({
+            "text": text,
+            "media_path": media_path,
+            "event": event
+        })
+        
+        # If there's already a pending processing task for this user, let it handle this new message too
+        if getattr(client, f"_processing_{user_id}", False):
+            return
+            
+        # Lock processing for this user
+        setattr(client, f"_processing_{user_id}", True)
+        
+        # Start a background task to process the buffer after a short delay
+        asyncio.create_task(process_buffered_messages(client, user_id))
 
-        logger.info(f"Received message from friend {user_id}: {text[:30]}...")
+async def process_buffered_messages(client, user_id: str):
+    import asyncio
+    import random
+    from ai.gemini_engine import generate_reply
+    
+    try:
+        # Wait a bit to see if the user sends more messages (e.g. 5 seconds)
+        await asyncio.sleep(5)
+        
+        global message_buffers
+        messages = message_buffers.pop(user_id, [])
+        setattr(client, f"_processing_{user_id}", False)
+        
+        if not messages:
+            return
+            
+        # Combine text from all messages
+        combined_text = "\n".join([m["text"] for m in messages if m["text"]])
+        
+        # Grab the last media path if there are multiple
+        media_paths = [m["media_path"] for m in messages if m["media_path"]]
+        final_media_path = media_paths[-1] if media_paths else None
+        
+        # The event we will reply to (the last one)
+        last_event = messages[-1]["event"]
+
+        logger.info(f"Processing aggregated messages from {user_id}: {combined_text[:30]}...")
 
         import asyncio
         import random
@@ -62,10 +111,10 @@ def register_friend_handlers(client, friends_list: list[str]):
             await asyncio.sleep(delay_seconds)
             
             # Mark message as read
-            await client.send_read_acknowledge(event.chat_id)
+            await client.send_read_acknowledge(last_event.chat_id)
             
             # Generate reply in a separate thread so we don't block the async event loop
-            reply_text = await asyncio.to_thread(generate_reply, user_id, text, media_path)
+            reply_text = await asyncio.to_thread(generate_reply, user_id, combined_text, final_media_path)
             
             # Split reply into multiple messages (by newlines or sentence boundaries)
             import re
@@ -93,22 +142,23 @@ def register_friend_handlers(client, friends_list: list[str]):
             for i, part in enumerate(final_parts):
                 typing_delay = min(len(part) / 15, 4)
                 
-                action = 'typing' if not media_path else 'document'
-                async with client.action(event.chat_id, action):
+                action = 'typing' if not final_media_path else 'document'
+                async with client.action(last_event.chat_id, action):
                     await asyncio.sleep(typing_delay)
                     
                 if i == 0:
-                    await event.reply(part)
+                    await last_event.reply(part)
                 else:
-                    await event.respond(part)
+                    await last_event.respond(part)
                 
             # Cleanup downloaded media
-            if media_path:
-                import os
-                try:
-                    os.remove(media_path)
-                except Exception as e:
-                    logger.error(f"Failed to delete {media_path}: {e}")
+            for media_path in media_paths:
+                if media_path:
+                    import os
+                    try:
+                        os.remove(media_path)
+                    except Exception as e:
+                        logger.error(f"Failed to delete {media_path}: {e}")
             
             # Update user metadata in SQLite
             db = get_db_session()
