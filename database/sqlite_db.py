@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 
@@ -27,9 +27,18 @@ class UserMetadata(Base):
     last_message_date = Column(DateTime, default=datetime.utcnow)
     last_topic = Column(Text, nullable=True)
     next_check_date = Column(DateTime, nullable=True) # Set by AI when to check next
+    consecutive_bot_messages = Column(Integer, default=0) # Tracks if the user is ignoring us
 
 # Create all tables
 Base.metadata.create_all(bind=engine)
+
+# Quick migration if table exists without the new column
+try:
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE users_metadata ADD COLUMN consecutive_bot_messages INTEGER DEFAULT 0"))
+        conn.commit()
+except Exception:
+    pass # Column already exists or other error
 
 def get_db_session():
     """Returns a new DB session."""

@@ -44,7 +44,7 @@ def register_friend_handlers(client, friends_list: list[str]):
         
         try:
             # 1. Determine delay based on last interaction
-            delay_seconds = random.randint(60, 600) # Default 5-10 minutes for inactive chats
+            delay_seconds = random.randint(60, 600) # Default 1-10 minutes for inactive chats
             
             db = get_db_session()
             try:
@@ -69,13 +69,23 @@ def register_friend_handlers(client, friends_list: list[str]):
             
             # Split reply into multiple messages (by newlines or sentence boundaries)
             import re
+            
+            # Don't split too aggressively. Only split by newlines, or if the text is very long, by punctuation.
+            # But avoid splitting every single short sentence.
             parts = [p.strip() for p in re.split(r'\n+', reply_text) if p.strip()]
             
             final_parts = []
             for p in parts:
-                if len(p) > 40 and re.search(r'[.!?]\s', p):
-                    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', p) if s.strip()]
-                    final_parts.extend(sentences)
+                # Only split into sentences if the paragraph is longer than 80 chars
+                if len(p) > 80 and re.search(r'[.!?]\s', p):
+                    # We split by sentence endings but try to group short sentences back together?
+                    # For simplicity, let's just not split sentences unless it's a huge block of text.
+                    # Or better yet, just send it as is if it's less than ~150 chars.
+                    if len(p) < 150:
+                        final_parts.append(p)
+                    else:
+                        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', p) if s.strip()]
+                        final_parts.extend(sentences)
                 else:
                     final_parts.append(p)
             
@@ -109,6 +119,7 @@ def register_friend_handlers(client, friends_list: list[str]):
                     db.add(user_meta)
                 
                 user_meta.last_message_date = datetime.utcnow()
+                user_meta.consecutive_bot_messages = 0 # Reset because user replied!
                 # next_check_date can be set here if we want to reset proactive timer
                 db.commit()
             except Exception as e:
