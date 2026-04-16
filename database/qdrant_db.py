@@ -1,6 +1,6 @@
 import uuid
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, VectorParams, PointStruct
+from qdrant_client.http.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 from config import QDRANT_HOST, QDRANT_PORT
 
 class QdrantDB:
@@ -42,19 +42,19 @@ class QdrantDB:
 
     def search_similar(self, user_id: str, query_embedding: list, limit: int = 5):
         """Searches for similar past messages in the user's history."""
-        results = self.client.search(
+        results = self.client.query_points(
             collection_name=self.collection_name,
-            query_vector=query_embedding,
-            query_filter={
-                "must": [
-                    {
-                        "key": "user_id",
-                        "match": {"value": user_id}
-                    }
+            query=query_embedding,
+            query_filter=Filter(
+                must=[
+                    FieldCondition(
+                        key="user_id",
+                        match=MatchValue(value=user_id)
+                    )
                 ]
-            },
+            ),
             limit=limit
         )
-        return results
+        return results.points
 
 qdrant_db = QdrantDB()
