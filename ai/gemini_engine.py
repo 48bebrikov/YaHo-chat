@@ -38,13 +38,36 @@ def generate_reply(user_id: str, message: str) -> str:
     if context:
         prompt = f"Here is the relevant past context of your conversation with this friend:\n{context}\n\nFriend's new message:\n{message}"
     
-    # Generate the response (this allows function calling automatically in newer python SDK versions via `chat` or generate_content)
-    # We should use a chat session if we want it to automatically handle tool calls back-and-forth easily.
-    # Alternatively, start a new chat with the prompt.
-    chat = model.start_chat(enable_automatic_function_calling=True)
-    response = chat.send_message(prompt)
+    # Using generate_content instead of start_chat to avoid potential blocking issues
+    # with automatic function calling loops in older SDK versions
+    response = model.generate_content(prompt)
     
-    reply_text = response.text
+    # If the model decided to call a function, response.parts will contain function_call
+    # We will handle basic function calling here
+    if response.parts and hasattr(response.parts[0], 'function_call') and response.parts[0].function_call:
+        fc = response.parts[0].function_call
+        function_name = fc.name
+        args = {k: v for k, v in fc.args.items()}
+        
+        # Execute the function
+        function_response = "Function not found."
+        if function_name == "search_internet":
+            function_response = search_internet(**args)
+        elif function_name == "search_youtube":
+            function_response = search_youtube(**args)
+        elif function_name == "search_saved_news":
+            function_response = search_saved_news(**args)
+            
+        # Send the function response back to the model to get the final text
+        # Since we didn't use a chat session, we need to construct the history manually
+        final_response = model.generate_content([
+            prompt,
+            response.parts[0], # The function call part from model
+            genai.protos.Part(function_response=genai.protos.FunctionResponse(name=function_name, response={"result": function_response}))
+        ])
+        reply_text = final_response.text
+    else:
+        reply_text = response.text
     
     # Save the interaction to memory
     save_message_to_memory(user_id, message, role="user")
