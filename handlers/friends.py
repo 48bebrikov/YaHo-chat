@@ -44,9 +44,9 @@ def register_friend_handlers(client, friends_list: list[str]):
         
         try:
             # Simulate the time it takes to notice a notification and open the app
-            # (between 3 and 15 seconds). This runs asynchronously, so other people's 
+            # (between 3 and 300 seconds). This runs asynchronously, so other people's 
             # messages are still processed in parallel!
-            await asyncio.sleep(random.randint(3, 15))
+            await asyncio.sleep(random.randint(10, 600))
             
             # Mark message as read
             await client.send_read_acknowledge(event.chat_id)
