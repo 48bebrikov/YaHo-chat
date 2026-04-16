@@ -18,7 +18,7 @@ SYSTEM_PROMPT = """Вы - девушка, общающийся со своим �
 
 def get_gemini_model():
     """Returns a configured Gemini model instance with tools."""
-    # Use gemini-1.5-flash since 3.1 flash is not fully supported in the REST API v1beta yet.
+    # Using the preview model as requested. Note: Function calling might be unstable in preview models.
     model = genai.GenerativeModel(
         model_name='gemini-3.1-flash-lite-preview',
         tools=[search_internet, search_youtube, search_saved_news],
