@@ -28,7 +28,6 @@ def register_friend_handlers(client, friends_list: list[str]):
         user_id = sender_id # consistently use ID for Qdrant storage
         
         # Add to buffer to aggregate multiple fast messages
-        global message_buffers
         if user_id not in message_buffers:
             message_buffers[user_id] = []
             
@@ -69,7 +68,6 @@ async def process_buffered_messages(client, user_id: str):
         # Wait a bit to see if the user sends more messages (e.g. 5 seconds)
         await asyncio.sleep(5)
         
-        global message_buffers
         messages = message_buffers.pop(user_id, [])
         setattr(client, f"_processing_{user_id}", False)
         
