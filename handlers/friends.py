@@ -138,7 +138,7 @@ async def process_buffered_messages(client, user_id: str):
             
             # Send messages one by one with typing simulation
             for i, part in enumerate(final_parts):
-                typing_delay = min(len(part) / 15, 4)
+                typing_delay = min(len(part) / 8, 12)
                 
                 action = 'typing' if not final_media_path else 'document'
                 async with client.action(last_event.chat_id, action):

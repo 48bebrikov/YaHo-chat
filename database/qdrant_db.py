@@ -5,14 +5,21 @@ from config import QDRANT_HOST, QDRANT_PORT
 
 class QdrantDB:
     def __init__(self, collection_name="messages", vector_size=768): # deepvk/USER-bge-m3 outputs 768 for base model
-        self.client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+        self._client = None
         self.collection_name = collection_name
         self.vector_size = vector_size
-        self._ensure_collection()
+
+    @property
+    def client(self):
+        """Connect lazily so importing this module does not require a running Qdrant (e.g. CI)."""
+        if self._client is None:
+            self._client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+            self._ensure_collection()
+        return self._client
 
     def _ensure_collection(self):
         """Creates collection if it doesn't exist."""
-        collections = self.client.get_collections().collections
+        collections = self._client.get_collections().collections
         exists = any(c.name == self.collection_name for c in collections)
         
         if not exists:
