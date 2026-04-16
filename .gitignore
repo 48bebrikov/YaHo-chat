@@ -1,0 +1,7 @@
+venv/
+.env
+__pycache__/
+*.pyc
+userbot_session.session
+userbot_session.session-journal
+database/*.db

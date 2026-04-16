@@ -1,0 +1,7 @@
+telethon==1.43.1
+qdrant-client==1.17.1
+google-generativeai==0.8.6
+sentence-transformers==3.4.1
+sqlalchemy==2.0.38
+python-dotenv==1.0.1
+duckduckgo-search==7.5.0

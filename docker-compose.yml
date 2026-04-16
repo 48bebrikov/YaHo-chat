@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: yaho_qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  userbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yaho_userbot
+    depends_on:
+      - qdrant
+    env_file:
+      - .env
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+    volumes:
+      # Пробрасываем локальную папку database/ внутрь, чтобы сохранить SQLite и файл сессии Telethon при перезапусках контейнера
+      - ./database:/app/database
+      - ./userbot_session.session:/app/userbot_session.session
+    restart: unless-stopped
+    # Используем stdin/stdout, так как Telethon при первом запуске требует ввода номера телефона и кода
+    stdin_open: true
+    tty: true
+
+volumes:
+  qdrant_data:

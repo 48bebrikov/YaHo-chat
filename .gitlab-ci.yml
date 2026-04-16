@@ -1,0 +1,37 @@
+stages:
+  - lint
+  - build
+  - test
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+
+# Стадия линтинга: проверяет синтаксис Python-кода с помощью flake8
+flake8:
+  stage: lint
+  image: python:3.12-slim
+  script:
+    - pip install flake8
+    - flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+    - flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+# Стадия сборки: пробуем собрать Docker образ (чтобы убедиться, что он билдится)
+build_docker:
+  stage: build
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE/userbot:latest .
+  
+# Стадия тестов: (в будущем сюда можно добавить pytest)
+# Пока просто проверяем, что python-модули можно импортировать
+test_imports:
+  stage: test
+  image: python:3.12-slim
+  script:
+    - pip install -r requirements.txt
+    - python -c "import config"
+    - python -c "from database import sqlite_db"
+    - python -c "from ai import gemini_engine"
