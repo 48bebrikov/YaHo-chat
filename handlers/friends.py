@@ -180,3 +180,6 @@ async def process_buffered_messages(client, user_id: str):
 
         except Exception as e:
             logger.error(f"Error generating reply: {e}")
+            
+    except Exception as e:
+        logger.error(f"Error in process_buffered_messages: {e}")
