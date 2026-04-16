@@ -38,7 +38,13 @@ def generate_reply(user_id: str, message: str, media_path: str = None) -> str:
         prompt_text = f"Here is the relevant past context of your conversation with this friend:\n{context}\n\nFriend's new message:\n{message}"
     
     # Construct the final prompt (handling multimodal input)
+    import datetime
+    current_time = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    
     prompt = []
+    # Add a hidden system note about current time for the tools
+    prompt.append(f"[System Note: Current Date and Time is {current_time}]")
+    
     if media_path and os.path.exists(media_path):
         import PIL.Image
         try:
@@ -59,6 +65,10 @@ def generate_reply(user_id: str, message: str, media_path: str = None) -> str:
         fc = response.parts[0].function_call
         function_name = fc.name
         args = {k: v for k, v in fc.args.items()}
+        
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Gemini decided to use tool: {function_name} with arguments {args}")
         
         # Execute the function
         function_response = "Function not found."
