@@ -43,27 +43,54 @@ def register_friend_handlers(client, friends_list: list[str]):
         import random
         
         try:
-            # Simulate the time it takes to notice a notification and open the app
-            # (between 3 and 300 seconds). This runs asynchronously, so other people's 
-            # messages are still processed in parallel!
-            await asyncio.sleep(random.randint(10, 600))
+            # 1. Determine delay based on last interaction
+            delay_seconds = random.randint(60, 600) # Default 5-10 minutes for inactive chats
+            
+            db = get_db_session()
+            try:
+                user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == user_id).first()
+                if user_meta and user_meta.last_message_date:
+                    delta = datetime.utcnow() - user_meta.last_message_date
+                    if delta.total_seconds() < 15 * 60: # If we chatted in the last 15 mins
+                        delay_seconds = random.randint(5, 30) # Quick reply
+            except Exception as e:
+                logger.error(f"DB Error checking last message: {e}")
+            finally:
+                db.close()
+                
+            logger.info(f"Waiting {delay_seconds}s before reading message from {user_id}")
+            await asyncio.sleep(delay_seconds)
             
             # Mark message as read
             await client.send_read_acknowledge(event.chat_id)
             
-            # Tell telegram we are typing...
-            action = 'typing' if not media_path else 'document'
-            async with client.action(event.chat_id, action):
-                # Generate reply in a separate thread so we don't block the async event loop
-                # This ensures true parallelism for multiple friends talking at once
-                reply_text = await asyncio.to_thread(generate_reply, user_id, text, media_path)
+            # Generate reply in a separate thread so we don't block the async event loop
+            reply_text = await asyncio.to_thread(generate_reply, user_id, text, media_path)
+            
+            # Split reply into multiple messages (by newlines or sentence boundaries)
+            import re
+            parts = [p.strip() for p in re.split(r'\n+', reply_text) if p.strip()]
+            
+            final_parts = []
+            for p in parts:
+                if len(p) > 40 and re.search(r'[.!?]\s', p):
+                    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', p) if s.strip()]
+                    final_parts.extend(sentences)
+                else:
+                    final_parts.append(p)
+            
+            # Send messages one by one with typing simulation
+            for i, part in enumerate(final_parts):
+                typing_delay = min(len(part) / 15, 4)
                 
-                # Add an artificial delay based on message length 
-                # to make typing look more human (e.g. max 5 seconds)
-                await asyncio.sleep(min(len(reply_text) / 15, 5))
-                
-                # Send the reply
-                await event.reply(reply_text)
+                action = 'typing' if not media_path else 'document'
+                async with client.action(event.chat_id, action):
+                    await asyncio.sleep(typing_delay)
+                    
+                if i == 0:
+                    await event.reply(part)
+                else:
+                    await event.respond(part)
                 
             # Cleanup downloaded media
             if media_path:
