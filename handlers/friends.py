@@ -39,17 +39,25 @@ def register_friend_handlers(client, friends_list: list[str]):
 
         logger.info(f"Received message from friend {user_id}: {text[:30]}...")
 
+        import asyncio
+        import random
+        
         try:
+            # Simulate the time it takes to notice a notification and open the app
+            # (between 3 and 15 seconds). This runs asynchronously, so other people's 
+            # messages are still processed in parallel!
+            await asyncio.sleep(random.randint(3, 15))
+            
             # Mark message as read
             await client.send_read_acknowledge(event.chat_id)
             
             # Tell telegram we are typing...
             action = 'typing' if not media_path else 'document'
             async with client.action(event.chat_id, action):
-                # Generate reply
-                reply_text = generate_reply(user_id, text, media_path=media_path)
+                # Generate reply in a separate thread so we don't block the async event loop
+                # This ensures true parallelism for multiple friends talking at once
+                reply_text = await asyncio.to_thread(generate_reply, user_id, text, media_path)
                 
-                import asyncio
                 # Add an artificial delay based on message length 
                 # to make typing look more human (e.g. max 5 seconds)
                 await asyncio.sleep(min(len(reply_text) / 15, 5))
