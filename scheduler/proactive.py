@@ -90,11 +90,45 @@ async def check_and_message_friends(client):
 
             response = model.generate_content(
                 prompt,
-                generation_config={"response_mime_type": "application/json"}
+                # We can't strictly enforce response_mime_type=application/json if we want tools to work,
+                # because if the model calls a tool, it returns a function_call part, not a JSON string.
+                # So we let it run normally and parse the text later.
             )
             
+            # If model decided to use a tool to get more context before deciding
+            if response.parts and hasattr(response.parts[0], 'function_call') and response.parts[0].function_call:
+                fc = response.parts[0].function_call
+                function_name = fc.name
+                args = {k: v for k, v in fc.args.items()}
+                
+                logger.info(f"Proactive Gemini decided to use tool: {function_name}")
+                
+                from ai.tools import search_internet, search_youtube
+                function_response = "Function not found."
+                if function_name == "search_internet":
+                    function_response = search_internet(**args)
+                elif function_name == "search_youtube":
+                    function_response = search_youtube(**args)
+                elif function_name == "search_saved_news":
+                    function_response = search_saved_news(**args)
+                    
+                import google.generativeai as genai
+                # Get the final response
+                response = model.generate_content([
+                    prompt,
+                    response.parts[0],
+                    genai.protos.Part(function_response=genai.protos.FunctionResponse(name=function_name, response={"result": function_response}))
+                ])
+
             try:
-                decision = json.loads(response.text)
+                # Find JSON block in case model wrapped it in markdown like ```json ... ```
+                import re
+                text_response = response.text
+                json_match = re.search(r'```json\n(.*?)\n```', text_response, re.DOTALL)
+                if json_match:
+                    text_response = json_match.group(1)
+                    
+                decision = json.loads(text_response)
                 should_message = decision.get("should_message", False)
                 message_text = decision.get("message_text", "")
                 next_check_hours = decision.get("next_check_hours", 4)
