@@ -22,19 +22,45 @@ def register_friend_handlers(client, friends_list: list[str]):
             return
 
         user_id = sender_id # consistently use ID for Qdrant storage
-        text = event.text
-        if not text:
-            # We skip pure media for now, though Gemini supports multimodal
+        
+        # Check if it's media or text
+        text = event.text or ""
+        media_path = None
+        
+        if event.photo:
+            # We skip downloading huge files, but let's download photos to send to Gemini
+            logger.info("Received a photo, downloading...")
+            media_path = await event.download_media(file="database/")
+            if not text:
+                text = "[Пользователь прислал фото]"
+
+        if not text and not media_path:
             return
 
         logger.info(f"Received message from friend {user_id}: {text[:30]}...")
 
         try:
-            # Generate reply
-            reply_text = generate_reply(user_id, text)
-            
-            # Send the reply
-            await event.reply(reply_text)
+            # Tell telegram we are typing...
+            action = 'typing' if not media_path else 'document'
+            async with client.action(event.chat_id, action):
+                # Generate reply
+                reply_text = generate_reply(user_id, text, media_path=media_path)
+                
+                import asyncio
+                # Add an artificial delay based on message length 
+                # to make typing look more human (e.g. max 5 seconds)
+                await asyncio.sleep(min(len(reply_text) / 15, 5))
+                
+                # Send the reply
+                await event.reply(reply_text)
+                
+            # Cleanup downloaded media
+            if media_path:
+                import os
+                try:
+                    os.remove(media_path)
+                except Exception as e:
+                    logger.error(f"Failed to delete {media_path}: {e}")
             
             # Update user metadata in SQLite
             db = get_db_session()

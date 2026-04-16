@@ -27,16 +27,28 @@ def get_gemini_model():
     )
     return model
 
-def generate_reply(user_id: str, message: str) -> str:
-    """Generates a reply from Gemini taking into account RAG memory."""
+def generate_reply(user_id: str, message: str, media_path: str = None) -> str:
+    """Generates a reply from Gemini taking into account RAG memory and optional media."""
     model = get_gemini_model()
     
     # Retrieve past context from Qdrant
     context = get_memory_context(user_id, message, limit=5)
     
-    prompt = message
+    prompt_text = message
     if context:
-        prompt = f"Here is the relevant past context of your conversation with this friend:\n{context}\n\nFriend's new message:\n{message}"
+        prompt_text = f"Here is the relevant past context of your conversation with this friend:\n{context}\n\nFriend's new message:\n{message}"
+    
+    # Construct the final prompt (handling multimodal input)
+    prompt = []
+    if media_path and os.path.exists(media_path):
+        import PIL.Image
+        try:
+            img = PIL.Image.open(media_path)
+            prompt.append(img)
+        except Exception as e:
+            print(f"Failed to open image {media_path}: {e}")
+            
+    prompt.append(prompt_text)
     
     # Using generate_content instead of start_chat to avoid potential blocking issues
     # with automatic function calling loops in older SDK versions
