@@ -4,7 +4,7 @@ from qdrant_client.http.models import Distance, VectorParams, PointStruct, Filte
 from config import QDRANT_HOST, QDRANT_PORT
 
 class QdrantDB:
-    def __init__(self, collection_name="messages", vector_size=1024): # 1024 is the size of deepvk/USER-bge-m3 embeddings
+    def __init__(self, collection_name="messages", vector_size=768): # deepvk/USER-bge-m3 outputs 768 for base model
         self.client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
         self.collection_name = collection_name
         self.vector_size = vector_size
