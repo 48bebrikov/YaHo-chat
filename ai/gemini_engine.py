@@ -113,6 +113,62 @@ async def generate_content_with_retry(
     raise RuntimeError("unreachable")
 
 
+def generate_content_with_retry_sync(
+    client: genai.Client,
+    *,
+    model: str,
+    contents,
+    config,
+) -> types.GenerateContentResponse:
+    """Same retry policy as generate_content_with_retry, using the synchronous client API."""
+    from ai.metrics import GEMINI_REQUESTS_TOTAL, GEMINI_REQUEST_LATENCY, GEMINI_TOKENS_TOTAL, Timer
+
+    max_attempts = 6
+    delay = 1.5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with Timer(GEMINI_REQUEST_LATENCY, model=model):
+                response = client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config,
+                )
+
+            GEMINI_REQUESTS_TOTAL.labels(model=model, status="success").inc()
+
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
+                metadata = response.usage_metadata
+                if hasattr(metadata, "prompt_token_count") and metadata.prompt_token_count:
+                    GEMINI_TOKENS_TOTAL.labels(model=model, token_type="prompt").inc(
+                        metadata.prompt_token_count
+                    )
+                if hasattr(metadata, "candidates_token_count") and metadata.candidates_token_count:
+                    GEMINI_TOKENS_TOTAL.labels(model=model, token_type="completion").inc(
+                        metadata.candidates_token_count
+                    )
+
+            return response
+
+        except Exception as e:
+            if attempt == max_attempts or not _is_transient_api_error(e):
+                GEMINI_REQUESTS_TOTAL.labels(model=model, status="error_fatal").inc()
+                raise
+
+            GEMINI_REQUESTS_TOTAL.labels(model=model, status="error_transient").inc()
+            jitter = random.uniform(0, delay * 0.25)
+            wait = min(delay + jitter, 45.0)
+            logger.warning(
+                "Gemini generate_content (sync) failed (attempt %s/%s): %s — retry in %.1fs",
+                attempt,
+                max_attempts,
+                e,
+                wait,
+            )
+            time.sleep(wait)
+            delay = min(delay * 2, 30.0)
+    raise RuntimeError("unreachable")
+
+
 def _tool_declarations() -> types.Tool:
     fns = (
         search_internet,

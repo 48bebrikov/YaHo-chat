@@ -56,7 +56,7 @@ def extract_memory_items(user_message: str, bot_reply: str, event_utc_iso: str) 
     Возвращает dict с ключами skip_all, items.
     При ошибке парсинга/API — None (вызывающий делает fallback).
     """
-    from ai.gemini_engine import MODEL_ID, generate_content_with_retry, get_genai_client
+    from ai.gemini_engine import MODEL_ID, generate_content_with_retry_sync, get_genai_client
 
     client = get_genai_client()
     user_part = MEMORY_EXTRACTOR_USER_TEMPLATE.format(
@@ -64,7 +64,7 @@ def extract_memory_items(user_message: str, bot_reply: str, event_utc_iso: str) 
         user_message=user_message or "",
         bot_reply=bot_reply or "",
     )
-    response = generate_content_with_retry(
+    response = generate_content_with_retry_sync(
         client,
         model=MODEL_ID,
         contents=types.UserContent(user_part),
