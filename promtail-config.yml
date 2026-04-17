@@ -24,9 +24,13 @@ scrape_configs:
       - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
         target_label: 'compose_service'
     pipeline_stages:
-      # Регулярное выражение для парсинга вашего формата логов (например, "2026-04-17 10:20:49,239 - ERROR - text")
+      # Склеиваем traceback и прочие строки без таймстампа с предыдущей строкой лога.
+      - multiline:
+          firstline: '^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2},\d{3}\s+-\s+[A-Z]+\s+-\s'
+          max_wait_time: 3s
+      # Парсинг формата Python logging: "2026-04-17 10:20:49,239 - ERROR - text"
+      # (?s) — точка захватывает переводы строк внутри одного события после multiline.
       - regex:
-          expression: '^(?P<time>\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2},\d{3})\s+-\s+(?P<level>[A-Z]+)\s+-\s+(?P<message>.*)$'
-      # Если регулярка сработала, извлекаем уровень логирования (level) как label
+          expression: '^(?P<time>\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2},\d{3})\s+-\s+(?P<level>[A-Z]+)\s+-\s+(?P<message>(?s).*)$'
       - labels:
           level:
