@@ -1,7 +1,7 @@
 import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
-from config import QDRANT_HOST, QDRANT_PORT
+from config import QDRANT_HOST, QDRANT_PORT, QDRANT_API_KEY
 
 # Payload: user_id, text, role, kind ("fact" | "dialogue_snippet"), sort_ts (float), event_utc_iso (str)
 
@@ -16,7 +16,11 @@ class QdrantDB:
     def client(self):
         """Connect lazily so importing this module does not require a running Qdrant (e.g. CI)."""
         if self._client is None:
-            self._client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+            self._client = QdrantClient(
+                host=QDRANT_HOST, 
+                port=QDRANT_PORT,
+                api_key=QDRANT_API_KEY if QDRANT_API_KEY else None
+            )
             self._ensure_collection()
         return self._client
 

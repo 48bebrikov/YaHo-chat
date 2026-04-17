@@ -49,8 +49,9 @@ deploy_to_vps:
     - ssh-keyscan $VPS_IP >> ~/.ssh/known_hosts
     - chmod 644 ~/.ssh/known_hosts
   script:
-    # Подключаемся к серверу, переходим в папку проекта, стягиваем новый код и перезапускаем Docker
-    # Переменная SSH_USER обычно равна root или вашему имени пользователя на VPS
+    # Копируем файл с переменными из GitLab CI (File variable ENV_FILE) на сервер
+    - scp $ENV_FILE $SSH_USER@$VPS_IP:~/yoho-chat/.env
+    # Подключаемся к серверу, стягиваем новый код и перезапускаем Docker
     - ssh $SSH_USER@$VPS_IP "cd ~/yoho-chat && git pull origin main && docker compose up -d --build"
   only:
     - main
