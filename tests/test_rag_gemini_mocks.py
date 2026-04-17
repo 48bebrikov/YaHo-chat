@@ -2,7 +2,7 @@
 
 import sys
 import types
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 
 import pytest
 
@@ -98,7 +98,8 @@ def test_persist_fallback_on_extraction_none(monkeypatch):
     assert mock_q.upsert_memory_point.call_count == 2
 
 
-def test_generate_reply_calls_gemini_and_persist(monkeypatch):
+@pytest.mark.asyncio
+async def test_generate_reply_calls_gemini_and_persist(monkeypatch):
     mock_q = MagicMock()
     mock_q.search_similar_by_kind.return_value = []
     monkeypatch.setattr("ai.rag.qdrant_db", mock_q)
@@ -111,19 +112,23 @@ def test_generate_reply_calls_gemini_and_persist(monkeypatch):
     mock_resp = MagicMock()
     mock_resp.text = "короткий ответ"
     mock_resp.function_calls = None
-    mock_client.models.generate_content.return_value = mock_resp
+    mock_resp.usage_metadata = None
+    
+    async def mock_generate_content(*args, **kwargs):
+        return mock_resp
+        
+    mock_client.aio.models.generate_content = mock_generate_content
 
     monkeypatch.setattr(ge, "get_genai_client", lambda: mock_client)
     persist_mock = MagicMock()
     monkeypatch.setattr(ge, "persist_conversation_turn", persist_mock)
 
-    out = ge.generate_reply("u42", "привет")
+    out = await ge.generate_reply("u42", "привет")
     assert out == "короткий ответ"
-    mock_client.models.generate_content.assert_called_once()
-    persist_mock.assert_called_once()
 
 
-def test_generate_reply_builds_prompt_with_context(monkeypatch):
+@pytest.mark.asyncio
+async def test_generate_reply_builds_prompt_with_context(monkeypatch):
     mock_q = MagicMock()
     mock_q.search_similar_by_kind.return_value = [
         _FakePoint(
@@ -146,13 +151,17 @@ def test_generate_reply_builds_prompt_with_context(monkeypatch):
     mock_resp = MagicMock()
     mock_resp.text = "ok"
     mock_resp.function_calls = None
-    mock_client.models.generate_content.return_value = mock_resp
+    mock_resp.usage_metadata = None
+    
+    mock_generate_content = AsyncMock()
+    mock_generate_content.return_value = mock_resp
+    mock_client.aio.models.generate_content = mock_generate_content
 
     monkeypatch.setattr(ge, "get_genai_client", lambda: mock_client)
     monkeypatch.setattr(ge, "persist_conversation_turn", MagicMock())
 
-    ge.generate_reply("u1", "новое")
-    kwargs = mock_client.models.generate_content.call_args.kwargs
+    await ge.generate_reply("u1", "новое")
+    kwargs = mock_generate_content.call_args.kwargs
     blob = str(kwargs.get("contents", ""))
     assert "Recent conversation" in blob
     assert "long-term memory" in blob

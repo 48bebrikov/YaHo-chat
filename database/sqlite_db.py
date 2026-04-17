@@ -17,6 +17,7 @@ class NewsCache(Base):
     channel_id = Column(String, index=True)
     message_id = Column(Integer)
     text = Column(Text)
+    media_path = Column(String, nullable=True)
     date_added = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 class FriendChatLog(Base):
@@ -49,6 +50,13 @@ class UserMetadata(Base):
 Base.metadata.create_all(bind=engine)
 
 # Quick migration if table exists without the new column
+try:
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE news_cache ADD COLUMN media_path VARCHAR"))
+        conn.commit()
+except Exception:
+    pass
+
 try:
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE users_metadata ADD COLUMN consecutive_bot_messages INTEGER DEFAULT 0"))

@@ -170,7 +170,18 @@ async def check_and_message_friends(client):
                 if context:
                     prompt += f"\n\nRecent conversation context:\n{context}"
 
-                first_user = types.UserContent(prompt)
+                prompt_content = [prompt]
+                if next_news and next_news.media_path:
+                    import os
+                    if os.path.exists(next_news.media_path):
+                        import PIL.Image
+                        try:
+                            img = PIL.Image.open(next_news.media_path)
+                            prompt_content.append(img)
+                        except Exception as e:
+                            logger.error(f"Failed to open image {next_news.media_path}: {e}")
+
+                first_user = types.UserContent(prompt_content)
                 response = await generate_content_with_retry(
                     gemini_client,
                     model=MODEL_ID,
