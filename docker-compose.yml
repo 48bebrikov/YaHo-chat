@@ -10,7 +10,7 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
-    userbot:
+  userbot:
     build:
       context: .
       dockerfile: Dockerfile
