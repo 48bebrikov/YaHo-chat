@@ -121,12 +121,20 @@ async def check_and_message_friends(client):
                 user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == friend_id).first()
 
                 if user_meta:
-                    if user_meta.next_check_date and datetime.now(timezone.utc) < user_meta.next_check_date:
-                        continue
+                    if user_meta.next_check_date:
+                        next_check = user_meta.next_check_date
+                        if next_check.tzinfo is None:
+                            next_check = next_check.replace(tzinfo=timezone.utc)
+                        if datetime.now(timezone.utc) < next_check:
+                            continue
 
                     if user_meta.last_user_message_at:
+                        last_user_msg = user_meta.last_user_message_at
+                        if last_user_msg.tzinfo is None:
+                            last_user_msg = last_user_msg.replace(tzinfo=timezone.utc)
+                            
                         idle_minutes = (
-                            datetime.now(timezone.utc) - user_meta.last_user_message_at
+                            datetime.now(timezone.utc) - last_user_msg
                         ).total_seconds() / 60
                         if idle_minutes < PROACTIVE_MIN_IDLE_MINUTES:
                             logger.info(
@@ -138,10 +146,15 @@ async def check_and_message_friends(client):
                 hours_since = 24
                 consecutive_messages = 0
                 if user_meta:
-                    delta = datetime.now(timezone.utc) - user_meta.last_message_date
-                    hours_since = round(delta.total_seconds() / 3600, 1)
-                    if hours_since > 24 * 7:
-                        user_meta.consecutive_bot_messages = 0
+                    last_msg_date = user_meta.last_message_date
+                    if last_msg_date and last_msg_date.tzinfo is None:
+                        last_msg_date = last_msg_date.replace(tzinfo=timezone.utc)
+                        
+                    if last_msg_date:
+                        delta = datetime.now(timezone.utc) - last_msg_date
+                        hours_since = round(delta.total_seconds() / 3600, 1)
+                        if hours_since > 24 * 7:
+                            user_meta.consecutive_bot_messages = 0
                     consecutive_messages = user_meta.consecutive_bot_messages or 0
 
                 next_news = _pick_news_for_friend(db, user_meta)
