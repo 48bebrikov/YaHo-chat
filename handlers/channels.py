@@ -1,5 +1,5 @@
 from telethon import events
-from database.sqlite_db import get_db_session, NewsCache
+from database.sqlite_db import db_session, NewsCache
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,18 +18,14 @@ def register_channel_handlers(client, monitored_channels: list[str]):
         channel = await event.get_chat()
         channel_id = getattr(channel, 'username', str(channel.id))
         
-        db = get_db_session()
         try:
-            news = NewsCache(
-                channel_id=channel_id,
-                message_id=event.id,
-                text=event.text
-            )
-            db.add(news)
-            db.commit()
+            with db_session() as db:
+                news = NewsCache(
+                    channel_id=channel_id,
+                    message_id=event.id,
+                    text=event.text
+                )
+                db.add(news)
             logger.info(f"Saved news from {channel_id}: {event.text[:30]}...")
         except Exception as e:
-            db.rollback()
             logger.error(f"Failed to save news: {e}")
-        finally:
-            db.close()

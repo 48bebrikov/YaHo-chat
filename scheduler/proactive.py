@@ -2,9 +2,9 @@ import asyncio
 import logging
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from database.sqlite_db import get_db_session, UserMetadata, NewsCache
+from database.sqlite_db import db_session, UserMetadata, NewsCache
 from config import POLL_INTERVAL_SECONDS, FRIENDS_LIST, PROACTIVE_MIN_IDLE_MINUTES
 from google.genai import types
 
@@ -12,13 +12,14 @@ from ai.gemini_engine import (
     MODEL_ID,
     complete_tool_response,
     config_with_tools,
+    generate_content_with_retry,
     get_genai_client,
 )
-from ai.rag import get_memory_context, save_message_to_memory
+from ai.rag import get_memory_context
 logger = logging.getLogger(__name__)
 
 PROACTIVE_PROMPT_GENERAL = """You are deciding whether to proactively text a friend on Telegram.
-You are an AI emulating a human friend.
+You are an real human friend.
 There are NO new channel posts queued for them right now (you cannot forward news in this turn).
 Context:
 - User ID: {user_id}
@@ -65,22 +66,27 @@ Respond in valid JSON ONLY:
 """
 
 
-def _pick_news_for_friend(db, user_meta, friend_index: int) -> NewsCache | None:
-    """Next unseen news for this friend; friend_index spreads different items across friends in one poll."""
-    last_id = 0
-    if user_meta and user_meta.last_forwarded_news_id:
-        last_id = user_meta.last_forwarded_news_id
+def _pick_news_for_friend(db, user_meta) -> NewsCache | None:
+    """Next unseen news for this friend."""
+    if not user_meta:
+        return None
+    if not user_meta.last_forwarded_news_id:
+        from sqlalchemy import func
+        max_id = db.query(func.max(NewsCache.id)).scalar() or 0
+        user_meta.last_forwarded_news_id = max_id
+        return None
+
+    last_id = user_meta.last_forwarded_news_id
     pending = (
         db.query(NewsCache)
         .filter(NewsCache.id > last_id)
         .order_by(NewsCache.id.asc())
+        .limit(1)
         .all()
     )
     if not pending:
         return None
-    if friend_index < len(pending):
-        return pending[friend_index]
-    return None
+    return pending[0]
 
 
 async def proactive_loop(client):
@@ -97,145 +103,145 @@ async def check_and_message_friends(client):
     if not FRIENDS_LIST or FRIENDS_LIST == [""]:
         return
 
-    db = get_db_session()
     try:
         gemini_client = get_genai_client()
     except RuntimeError:
         logger.error("GEMINI_API_KEY missing; proactive check skipped.")
-        db.close()
         return
 
     try:
-        current_utc = datetime.utcnow()
-        current_gmt7 = current_utc + timedelta(hours=7)
-        if 3 <= current_gmt7.hour < 8:
-            logger.info("It's night time (GMT+7). Skipping proactive check.")
-            return
+        with db_session() as db:
+            current_utc = datetime.now(timezone.utc)
+            current_gmt7 = current_utc + timedelta(hours=7)
+            if 3 <= current_gmt7.hour < 8:
+                logger.info("It's night time (GMT+7). Skipping proactive check.")
+                return
 
-        for friend_index, friend_id in enumerate(FRIENDS_LIST):
-            user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == friend_id).first()
+            for friend_index, friend_id in enumerate(FRIENDS_LIST):
+                user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == friend_id).first()
 
-            if user_meta:
-                if user_meta.next_check_date and datetime.utcnow() < user_meta.next_check_date:
-                    continue
-
-                if user_meta.last_user_message_at:
-                    idle_minutes = (
-                        datetime.utcnow() - user_meta.last_user_message_at
-                    ).total_seconds() / 60
-                    if idle_minutes < PROACTIVE_MIN_IDLE_MINUTES:
-                        logger.info(
-                            f"Skipping proactive for {friend_id}: user wrote {idle_minutes:.0f} min ago "
-                            f"(threshold {PROACTIVE_MIN_IDLE_MINUTES} min)"
-                        )
+                if user_meta:
+                    if user_meta.next_check_date and datetime.now(timezone.utc) < user_meta.next_check_date:
                         continue
 
-            hours_since = 24
-            consecutive_messages = 0
-            if user_meta:
-                delta = datetime.utcnow() - user_meta.last_message_date
-                hours_since = round(delta.total_seconds() / 3600, 1)
-                consecutive_messages = user_meta.consecutive_bot_messages or 0
+                    if user_meta.last_user_message_at:
+                        idle_minutes = (
+                            datetime.now(timezone.utc) - user_meta.last_user_message_at
+                        ).total_seconds() / 60
+                        if idle_minutes < PROACTIVE_MIN_IDLE_MINUTES:
+                            logger.info(
+                                f"Skipping proactive for {friend_id}: user wrote {idle_minutes:.0f} min ago "
+                                f"(threshold {PROACTIVE_MIN_IDLE_MINUTES} min)"
+                            )
+                            continue
 
-            next_news = _pick_news_for_friend(db, user_meta, friend_index)
+                hours_since = 24
+                consecutive_messages = 0
+                if user_meta:
+                    delta = datetime.now(timezone.utc) - user_meta.last_message_date
+                    hours_since = round(delta.total_seconds() / 3600, 1)
+                    if hours_since > 24 * 7:
+                        user_meta.consecutive_bot_messages = 0
+                    consecutive_messages = user_meta.consecutive_bot_messages or 0
 
-            context = get_memory_context(friend_id, "latest conversation", limit=3)
+                next_news = _pick_news_for_friend(db, user_meta)
 
-            if next_news:
-                preview = (next_news.text or "")[:800]
-                prompt = PROACTIVE_PROMPT_WITH_FORWARD.format(
-                    user_id=friend_id,
-                    hours_since=hours_since,
-                    consecutive_messages=consecutive_messages,
-                    news_preview=preview,
-                    current_time=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
-                )
-            else:
-                prompt = PROACTIVE_PROMPT_GENERAL.format(
-                    user_id=friend_id,
-                    hours_since=hours_since,
-                    consecutive_messages=consecutive_messages,
-                    current_time=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                context = get_memory_context(
+                    friend_id, "latest conversation", limit_facts=3, limit_dialogue=3
                 )
 
-            if context:
-                prompt += f"\n\nRecent conversation context:\n{context}"
+                if next_news:
+                    preview = (next_news.text or "")[:800]
+                    prompt = PROACTIVE_PROMPT_WITH_FORWARD.format(
+                        user_id=friend_id,
+                        hours_since=hours_since,
+                        consecutive_messages=consecutive_messages,
+                        news_preview=preview,
+                        current_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    )
+                else:
+                    prompt = PROACTIVE_PROMPT_GENERAL.format(
+                        user_id=friend_id,
+                        hours_since=hours_since,
+                        consecutive_messages=consecutive_messages,
+                        current_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    )
 
-            first_user = types.UserContent(prompt)
-            response = gemini_client.models.generate_content(
-                model=MODEL_ID,
-                contents=first_user,
-                config=config_with_tools(),
-            )
+                if context:
+                    prompt += f"\n\nRecent conversation context:\n{context}"
 
-            if response.function_calls:
-                logger.info(
-                    f"Proactive Gemini decided to use tool: {response.function_calls[0].name}"
+                first_user = types.UserContent(prompt)
+                response = await generate_content_with_retry(
+                    gemini_client,
+                    model=MODEL_ID,
+                    contents=first_user,
+                    config=config_with_tools(),
                 )
-                response = complete_tool_response(gemini_client, first_user, response)
 
-            try:
-                text_response = response.text
-                json_match = re.search(r"```json\n(.*?)\n```", text_response, re.DOTALL)
-                if json_match:
-                    text_response = json_match.group(1)
-
-                decision = json.loads(text_response)
-                should_message = decision.get("should_message", False)
-                message_text = (decision.get("message_text") or "").strip()
-                next_check_hours = decision.get("next_check_hours", 4)
-
-                if not user_meta:
-                    user_meta = UserMetadata(user_id=friend_id)
-                    db.add(user_meta)
+                if response.function_calls:
+                    logger.info(
+                        f"Proactive Gemini decided to use tool: {response.function_calls[0].name}"
+                    )
+                    response = await complete_tool_response(gemini_client, first_user, response)
 
                 try:
-                    target = int(friend_id)
-                except ValueError:
-                    target = friend_id
+                    text_response = response.text
+                    json_match = re.search(r"```json\n(.*?)\n```", text_response, re.DOTALL)
+                    if json_match:
+                        text_response = json_match.group(1)
 
-                if should_message and (next_news or message_text):
-                    delivered = False
-                    if next_news:
-                        try:
-                            from_peer = await client.get_entity(next_news.channel_id)
-                            await client.forward_messages(target, next_news.message_id, from_peer=from_peer)
-                            logger.info(
-                                f"Forwarded news id={next_news.id} from {next_news.channel_id} to {target}"
-                            )
-                            delivered = True
-                        except Exception as ex:
-                            logger.error(
-                                f"Forward failed for news id={next_news.id}, falling back to text only: {ex}"
-                            )
-                            if not message_text:
-                                message_text = (next_news.text or "")[:4096]
+                    decision = json.loads(text_response)
+                    should_message = decision.get("should_message", False)
+                    message_text = (decision.get("message_text") or "").strip()
+                    next_check_hours = decision.get("next_check_hours", 4)
+
+                    if not user_meta:
+                        user_meta = UserMetadata(user_id=friend_id)
+                        db.add(user_meta)
+
+                    try:
+                        target = int(friend_id)
+                    except ValueError:
+                        target = friend_id
+
+                    if should_message and (next_news or message_text):
+                        delivered = False
+                        if next_news:
+                            try:
+                                from_peer = await client.get_entity(next_news.channel_id)
+                                await client.forward_messages(target, next_news.message_id, from_peer=from_peer)
+                                logger.info(
+                                    f"Forwarded news id={next_news.id} from {next_news.channel_id} to {target}"
+                                )
+                                delivered = True
+                            except Exception as ex:
+                                logger.error(
+                                    f"Forward failed for news id={next_news.id}: {ex}"
+                                )
 
                     if message_text:
                         logger.info(f"Proactively sending comment to {target}: {message_text[:120]}...")
                         await client.send_message(target, message_text)
-                        save_message_to_memory(friend_id, message_text, role="bot")
                         delivered = True
 
-                    if next_news and delivered:
-                        user_meta.last_forwarded_news_id = next_news.id
+                    if delivered:
+                        from ai.metrics import BOT_MESSAGES_SENT_TOTAL
+                        BOT_MESSAGES_SENT_TOTAL.labels(type="proactive").inc()
 
-                    user_meta.last_message_date = datetime.utcnow()
-                    user_meta.consecutive_bot_messages = (user_meta.consecutive_bot_messages or 0) + 1
-                    user_meta.next_check_date = None
-                else:
-                    logger.info(
-                        f"Decided not to message {friend_id}. Checking again in {next_check_hours} hours."
-                    )
-                    user_meta.next_check_date = datetime.utcnow() + timedelta(hours=next_check_hours)
+                        if next_news:
+                            user_meta.last_forwarded_news_id = next_news.id
 
-                db.commit()
+                        user_meta.last_message_date = datetime.now(timezone.utc)
+                        user_meta.consecutive_bot_messages = (user_meta.consecutive_bot_messages or 0) + 1
+                        user_meta.next_check_date = None
+                    else:
+                        logger.info(
+                            f"Decided not to message {friend_id}. Checking again in {next_check_hours} hours."
+                        )
+                        user_meta.next_check_date = datetime.now(timezone.utc) + timedelta(hours=next_check_hours)
 
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse JSON from Gemini: {response.text}")
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse JSON from Gemini: {response.text}")
 
     except Exception as e:
         logger.error(f"Failed during check_and_message_friends: {e}")
-        db.rollback()
-    finally:
-        db.close()

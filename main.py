@@ -23,6 +23,14 @@ async def main():
     register_channel_handlers(client, MONITORED_CHANNELS)
     register_friend_handlers(client, FRIENDS_LIST)
     
+    # Start Prometheus metrics server
+    from prometheus_client import start_http_server
+    try:
+        start_http_server(8000)
+        logger.info("Prometheus metrics server started on port 8000")
+    except Exception as e:
+        logger.error(f"Failed to start Prometheus metrics server: {e}")
+
     await client.start()
     logger.info("Userbot started successfully.")
     

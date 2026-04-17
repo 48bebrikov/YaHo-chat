@@ -35,3 +35,6 @@ FRIEND_THINKING_AFTER_READ_MIN = int(os.getenv("FRIEND_THINKING_AFTER_READ_MIN",
 FRIEND_THINKING_AFTER_READ_MAX = int(os.getenv("FRIEND_THINKING_AFTER_READ_MAX", "12"))
 # Extra "typing" time per outgoing message part after the first (seconds cap)
 FRIEND_TYPING_PER_PART_MAX = float(os.getenv("FRIEND_TYPING_PER_PART_MAX", "10"))
+
+# Verbatim recent chat lines (user+bot) passed to Gemini alongside RAG
+RECENT_CHAT_WINDOW_MESSAGES = int(os.getenv("RECENT_CHAT_WINDOW_MESSAGES", "10"))

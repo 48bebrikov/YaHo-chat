@@ -5,3 +5,4 @@ __pycache__/
 userbot_session.session
 userbot_session.session-journal
 database/*.db
+local_cache.db

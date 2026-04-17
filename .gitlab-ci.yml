@@ -26,15 +26,13 @@ build_docker:
   script:
     - docker build -t $CI_REGISTRY_IMAGE/userbot:latest .
 
-# Стадия тестов: (в будущем сюда можно добавить pytest)
+# Стадия тестов: pytest (без импорта gemini_engine/rag/embedder — тяжёлые зависимости)
 test_imports:
   stage: test
   image: python:3.12-slim
   script:
     - pip install -r requirements.txt
-    - python -c "import config"
-    # Остальные импорты (Qdrant, Gemini) убраны, так как при их загрузке
-    # происходит попытка соединиться с БД, которая не запущена в CI-среде.
+    - pytest -q
 
 
 deploy_to_vps:

@@ -8,3 +8,5 @@ ddgs==9.13.1
 httpx==0.28.1
 playwright==1.58.0
 pillow==10.4.0
+pytest==8.3.5
+prometheus_client==0.20.0

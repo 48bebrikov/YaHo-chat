@@ -10,7 +10,7 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
-  userbot:
+    userbot:
     build:
       context: .
       dockerfile: Dockerfile
@@ -22,6 +22,8 @@ services:
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
+    ports:
+      - "8000:8000" # Expose prometheus metrics
     volumes:
       # Пробрасываем локальную папку database/ внутрь, чтобы сохранить SQLite и файл сессии Telethon при перезапусках контейнера
       - ./database:/app/database
@@ -30,6 +32,24 @@ services:
     # Используем stdin/stdout, так как Telethon при первом запуске требует ввода номера телефона и кода
     stdin_open: true
     tty: true
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: yaho_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: yaho_grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
 
 volumes:
   qdrant_data:

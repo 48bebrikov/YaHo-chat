@@ -3,7 +3,7 @@ import logging
 import os
 import random
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 from telethon import events
 
@@ -19,8 +19,11 @@ from config import (
     FRIEND_THINKING_AFTER_READ_MIN,
     FRIEND_TYPING_PER_PART_MAX,
 )
-from database.sqlite_db import get_db_session, UserMetadata
+from database.sqlite_db import db_session, UserMetadata
 logger = logging.getLogger(__name__)
+
+from collections import defaultdict
+user_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 # Global buffer to store incoming messages
 message_buffers = {}
@@ -43,19 +46,15 @@ async def _wait_until_quiet_buffer(user_id: str, quiet: float) -> None:
 
 def _record_user_message_activity(user_id: str) -> None:
     """Mark that the user just wrote in private — proactive loop uses this to avoid interrupting a live chat."""
-    db = get_db_session()
     try:
-        user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == user_id).first()
-        if not user_meta:
-            user_meta = UserMetadata(user_id=user_id)
-            db.add(user_meta)
-        user_meta.last_user_message_at = datetime.utcnow()
-        db.commit()
+        with db_session() as db:
+            user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == user_id).first()
+            if not user_meta:
+                user_meta = UserMetadata(user_id=user_id)
+                db.add(user_meta)
+            user_meta.last_user_message_at = datetime.now(timezone.utc)
     except Exception as e:
-        db.rollback()
         logger.error(f"DB Error recording user activity: {e}")
-    finally:
-        db.close()
 
 def register_friend_handlers(client, friends_list: list[str]):
     if not friends_list or friends_list == [""]:
@@ -98,16 +97,18 @@ def register_friend_handlers(client, friends_list: list[str]):
         _record_user_message_activity(user_id)
 
         # If there's already a pending processing task for this user, let it handle this new message too
-        if getattr(client, f"_processing_{user_id}", False):
+        if user_locks[user_id].locked():
             return
             
-        # Lock processing for this user
-        setattr(client, f"_processing_{user_id}", True)
-        
-        # Start a background task to process the buffer after a short delay
-        asyncio.create_task(process_buffered_messages(client, user_id))
+        asyncio.create_task(_run_processing(client, user_id))
+
+async def _run_processing(client, user_id: str):
+    async with user_locks[user_id]:
+        while message_buffers.get(user_id):
+            await process_buffered_messages(client, user_id)
 
 async def process_buffered_messages(client, user_id: str):
+    media_paths = []
     try:
         # Wait until the user stops sending for a few seconds (merges split thoughts into one reply)
         await _wait_until_quiet_buffer(user_id, BUFFER_QUIET_SECONDS)
@@ -133,19 +134,17 @@ async def process_buffered_messages(client, user_id: str):
             # 1. Determine delay based on last interaction
             delay_seconds = random.randint(FRIEND_REPLY_DELAY_COLD_MIN, FRIEND_REPLY_DELAY_COLD_MAX)
 
-            db = get_db_session()
             try:
-                user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == user_id).first()
-                if user_meta and user_meta.last_message_date:
-                    delta = datetime.utcnow() - user_meta.last_message_date
-                    if delta.total_seconds() < FRIEND_REPLY_WARM_WINDOW_MINUTES * 60:
-                        delay_seconds = random.randint(
-                            FRIEND_REPLY_DELAY_WARM_MIN, FRIEND_REPLY_DELAY_WARM_MAX
-                        )
+                with db_session() as db:
+                    user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == user_id).first()
+                    if user_meta and user_meta.last_message_date:
+                        delta = datetime.now(timezone.utc) - user_meta.last_message_date
+                        if delta.total_seconds() < FRIEND_REPLY_WARM_WINDOW_MINUTES * 60:
+                            delay_seconds = random.randint(
+                                FRIEND_REPLY_DELAY_WARM_MIN, FRIEND_REPLY_DELAY_WARM_MAX
+                            )
             except Exception as e:
                 logger.error(f"DB Error checking last message: {e}")
-            finally:
-                db.close()
                 
             logger.info(f"Waiting {delay_seconds}s before reading message from {user_id}")
             await asyncio.sleep(delay_seconds)
@@ -159,9 +158,14 @@ async def process_buffered_messages(client, user_id: str):
 
             action = "typing" if not final_media_path else "document"
             async with client.action(last_event.chat_id, action):
-                reply_text = await asyncio.to_thread(
-                    generate_reply, user_id, combined_text, final_media_path
-                )
+                try:
+                    reply_text = await asyncio.wait_for(
+                        generate_reply(user_id, combined_text, final_media_path),
+                        timeout=90.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"generate_reply timed out for {user_id}")
+                    return
             
             # Split reply into multiple messages (by newlines or sentence boundaries)
             # Don't split too aggressively. Only split by newlines, or if the text is very long, by punctuation.
@@ -195,32 +199,23 @@ async def process_buffered_messages(client, user_id: str):
                     await last_event.reply(part)
                 else:
                     await last_event.respond(part)
-                
-            # Cleanup downloaded media
-            for media_path in media_paths:
-                if media_path:
-                    try:
-                        os.remove(media_path)
-                    except Exception as e:
-                        logger.error(f"Failed to delete {media_path}: {e}")
             
-            # Update user metadata in SQLite
-            db = get_db_session()
-            try:
-                user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == user_id).first()
-                if not user_meta:
-                    user_meta = UserMetadata(user_id=user_id)
-                    db.add(user_meta)
+            from ai.metrics import BOT_MESSAGES_SENT_TOTAL
+            BOT_MESSAGES_SENT_TOTAL.labels(type="reply").inc()
                 
-                user_meta.last_message_date = datetime.utcnow()
-                user_meta.consecutive_bot_messages = 0 # Reset because user replied!
-                # next_check_date can be set here if we want to reset proactive timer
-                db.commit()
+            # Update user metadata in SQLite
+            try:
+                with db_session() as db:
+                    user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == user_id).first()
+                    if not user_meta:
+                        user_meta = UserMetadata(user_id=user_id)
+                        db.add(user_meta)
+                    
+                    user_meta.last_message_date = datetime.now(timezone.utc)
+                    user_meta.consecutive_bot_messages = 0 # Reset because user replied!
+                    # next_check_date can be set here if we want to reset proactive timer
             except Exception as e:
-                db.rollback()
                 logger.error(f"DB Error: {e}")
-            finally:
-                db.close()
 
         except Exception as e:
             logger.error(f"Error generating reply: {e}")
@@ -228,7 +223,9 @@ async def process_buffered_messages(client, user_id: str):
     except Exception as e:
         logger.error(f"Error in process_buffered_messages: {e}")
     finally:
-        setattr(client, f"_processing_{user_id}", False)
-        if message_buffers.get(user_id):
-            setattr(client, f"_processing_{user_id}", True)
-            asyncio.create_task(process_buffered_messages(client, user_id))
+        for media_path in media_paths:
+            if media_path:
+                try:
+                    os.remove(media_path)
+                except Exception as e:
+                    logger.error(f"Failed to delete {media_path}: {e}")
