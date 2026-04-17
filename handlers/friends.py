@@ -137,8 +137,14 @@ async def process_buffered_messages(client, user_id: str):
             try:
                 with db_session() as db:
                     user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == user_id).first()
+                    
+                    # Make last_message_date offset-aware if it's naive
                     if user_meta and user_meta.last_message_date:
-                        delta = datetime.now(timezone.utc) - user_meta.last_message_date
+                        last_msg_date = user_meta.last_message_date
+                        if last_msg_date.tzinfo is None:
+                            last_msg_date = last_msg_date.replace(tzinfo=timezone.utc)
+                            
+                        delta = datetime.now(timezone.utc) - last_msg_date
                         if delta.total_seconds() < FRIEND_REPLY_WARM_WINDOW_MINUTES * 60:
                             delay_seconds = random.randint(
                                 FRIEND_REPLY_DELAY_WARM_MIN, FRIEND_REPLY_DELAY_WARM_MAX

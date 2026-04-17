@@ -5,7 +5,6 @@ services:
     image: qdrant/qdrant:latest
     container_name: yaho_qdrant
     ports:
-      # Порт открыт в интернет, но защищен паролем (API-ключом)
       - "6333:6333"
     environment:
       - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}

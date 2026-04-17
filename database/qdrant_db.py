@@ -19,7 +19,8 @@ class QdrantDB:
             self._client = QdrantClient(
                 host=QDRANT_HOST, 
                 port=QDRANT_PORT,
-                api_key=QDRANT_API_KEY if QDRANT_API_KEY else None
+                api_key=QDRANT_API_KEY if QDRANT_API_KEY else None,
+                https=False  # Явно отключаем SSL, так как Qdrant локальный
             )
             self._ensure_collection()
         return self._client
