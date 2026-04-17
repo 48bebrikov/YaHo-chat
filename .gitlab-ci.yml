@@ -25,7 +25,7 @@ build_docker:
     - docker:24.0.5-dind
   script:
     - docker build -t $CI_REGISTRY_IMAGE/userbot:latest .
-  
+
 # Стадия тестов: (в будущем сюда можно добавить pytest)
 test_imports:
   stage: test
@@ -33,11 +33,10 @@ test_imports:
   script:
     - pip install -r requirements.txt
     - python -c "import config"
-    # Остальные импорты (Qdrant, Gemini) убраны, так как при их загрузке 
+    # Остальные импорты (Qdrant, Gemini) убраны, так как при их загрузке
     # происходит попытка соединиться с БД, которая не запущена в CI-среде.
 
-# Автоматический деплой на VPS сервер по SSH
-# Запускается только для ветки main, если все предыдущие стадии (lint, build, test) прошли успешно
+
 deploy_to_vps:
   stage: deploy
   image: alpine:latest
@@ -54,6 +53,6 @@ deploy_to_vps:
   script:
     # Подключаемся к серверу, переходим в папку проекта, стягиваем новый код и перезапускаем Docker
     # Переменная SSH_USER обычно равна root или вашему имени пользователя на VPS
-    - ssh $SSH_USER@$VPS_IP "cd ~/yoho-chat && git pull origin main && docker-compose up -d --build"
+    - ssh $SSH_USER@$VPS_IP "cd ~/yoho-chat && git pull origin main && docker compose up -d --build"
   only:
     - main

@@ -1,14 +1,61 @@
-from telethon import events
-from ai.gemini_engine import generate_reply
-from database.sqlite_db import get_db_session, UserMetadata
-import logging
-from datetime import datetime
 import asyncio
+import logging
+import os
+import random
+import re
+from datetime import datetime
 
+from telethon import events
+
+from ai.gemini_engine import generate_reply
+from config import (
+    BUFFER_QUIET_SECONDS,
+    FRIEND_REPLY_DELAY_COLD_MAX,
+    FRIEND_REPLY_DELAY_COLD_MIN,
+    FRIEND_REPLY_DELAY_WARM_MAX,
+    FRIEND_REPLY_DELAY_WARM_MIN,
+    FRIEND_REPLY_WARM_WINDOW_MINUTES,
+    FRIEND_THINKING_AFTER_READ_MAX,
+    FRIEND_THINKING_AFTER_READ_MIN,
+    FRIEND_TYPING_PER_PART_MAX,
+)
+from database.sqlite_db import get_db_session, UserMetadata
 logger = logging.getLogger(__name__)
 
 # Global buffer to store incoming messages
 message_buffers = {}
+
+
+async def _wait_until_quiet_buffer(user_id: str, quiet: float) -> None:
+    """Wait until the buffer stops growing for `quiet` seconds (user finished the burst)."""
+    while True:
+        buf = message_buffers.get(user_id)
+        if not buf:
+            return
+        prev_count = len(buf)
+        await asyncio.sleep(quiet)
+        buf = message_buffers.get(user_id)
+        if not buf:
+            return
+        if len(buf) == prev_count:
+            return
+
+
+def _record_user_message_activity(user_id: str) -> None:
+    """Mark that the user just wrote in private — proactive loop uses this to avoid interrupting a live chat."""
+    db = get_db_session()
+    try:
+        user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == user_id).first()
+        if not user_meta:
+            user_meta = UserMetadata(user_id=user_id)
+            db.add(user_meta)
+        user_meta.last_user_message_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"DB Error recording user activity: {e}")
+    finally:
+        db.close()
 
 def register_friend_handlers(client, friends_list: list[str]):
     if not friends_list or friends_list == [""]:
@@ -48,7 +95,8 @@ def register_friend_handlers(client, friends_list: list[str]):
             "media_path": media_path,
             "event": event
         })
-        
+        _record_user_message_activity(user_id)
+
         # If there's already a pending processing task for this user, let it handle this new message too
         if getattr(client, f"_processing_{user_id}", False):
             return
@@ -60,20 +108,15 @@ def register_friend_handlers(client, friends_list: list[str]):
         asyncio.create_task(process_buffered_messages(client, user_id))
 
 async def process_buffered_messages(client, user_id: str):
-    import asyncio
-    import random
-    from ai.gemini_engine import generate_reply
-    
     try:
-        # Wait a bit to see if the user sends more messages (e.g. 5 seconds)
-        await asyncio.sleep(5)
-        
+        # Wait until the user stops sending for a few seconds (merges split thoughts into one reply)
+        await _wait_until_quiet_buffer(user_id, BUFFER_QUIET_SECONDS)
+
         messages = message_buffers.pop(user_id, [])
-        setattr(client, f"_processing_{user_id}", False)
-        
+
         if not messages:
             return
-            
+
         # Combine text from all messages
         combined_text = "\n".join([m["text"] for m in messages if m["text"]])
         
@@ -86,20 +129,19 @@ async def process_buffered_messages(client, user_id: str):
 
         logger.info(f"Processing aggregated messages from {user_id}: {combined_text[:30]}...")
 
-        import asyncio
-        import random
-        
         try:
             # 1. Determine delay based on last interaction
-            delay_seconds = random.randint(60, 600) # Default 1-10 minutes for inactive chats
-            
+            delay_seconds = random.randint(FRIEND_REPLY_DELAY_COLD_MIN, FRIEND_REPLY_DELAY_COLD_MAX)
+
             db = get_db_session()
             try:
                 user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == user_id).first()
                 if user_meta and user_meta.last_message_date:
                     delta = datetime.utcnow() - user_meta.last_message_date
-                    if delta.total_seconds() < 15 * 60: # If we chatted in the last 15 mins
-                        delay_seconds = random.randint(5, 30) # Quick reply
+                    if delta.total_seconds() < FRIEND_REPLY_WARM_WINDOW_MINUTES * 60:
+                        delay_seconds = random.randint(
+                            FRIEND_REPLY_DELAY_WARM_MIN, FRIEND_REPLY_DELAY_WARM_MAX
+                        )
             except Exception as e:
                 logger.error(f"DB Error checking last message: {e}")
             finally:
@@ -108,15 +150,20 @@ async def process_buffered_messages(client, user_id: str):
             logger.info(f"Waiting {delay_seconds}s before reading message from {user_id}")
             await asyncio.sleep(delay_seconds)
             
-            # Mark message as read
+            # Mark message as read (after delay above — until here, messages stayed "unread")
             await client.send_read_acknowledge(last_event.chat_id)
-            
-            # Generate reply in a separate thread so we don't block the async event loop
-            reply_text = await asyncio.to_thread(generate_reply, user_id, combined_text, final_media_path)
+
+            # Pause as if reading the text on screen, before typing starts
+            think_s = random.randint(FRIEND_THINKING_AFTER_READ_MIN, FRIEND_THINKING_AFTER_READ_MAX)
+            await asyncio.sleep(think_s)
+
+            action = "typing" if not final_media_path else "document"
+            async with client.action(last_event.chat_id, action):
+                reply_text = await asyncio.to_thread(
+                    generate_reply, user_id, combined_text, final_media_path
+                )
             
             # Split reply into multiple messages (by newlines or sentence boundaries)
-            import re
-            
             # Don't split too aggressively. Only split by newlines, or if the text is very long, by punctuation.
             # But avoid splitting every single short sentence.
             parts = [p.strip() for p in re.split(r'\n+', reply_text) if p.strip()]
@@ -136,14 +183,14 @@ async def process_buffered_messages(client, user_id: str):
                 else:
                     final_parts.append(p)
             
-            # Send messages one by one with typing simulation
+            # Further parts: short typing before each (first part was "typed" during generation)
             for i, part in enumerate(final_parts):
-                typing_delay = min(len(part) / 8, 12)
-                
-                action = 'typing' if not final_media_path else 'document'
-                async with client.action(last_event.chat_id, action):
-                    await asyncio.sleep(typing_delay)
-                    
+                if i > 0:
+                    typing_delay = min(len(part) / 8, FRIEND_TYPING_PER_PART_MAX)
+                    action = "typing" if not final_media_path else "document"
+                    async with client.action(last_event.chat_id, action):
+                        await asyncio.sleep(typing_delay)
+
                 if i == 0:
                     await last_event.reply(part)
                 else:
@@ -152,7 +199,6 @@ async def process_buffered_messages(client, user_id: str):
             # Cleanup downloaded media
             for media_path in media_paths:
                 if media_path:
-                    import os
                     try:
                         os.remove(media_path)
                     except Exception as e:
@@ -178,6 +224,11 @@ async def process_buffered_messages(client, user_id: str):
 
         except Exception as e:
             logger.error(f"Error generating reply: {e}")
-            
+
     except Exception as e:
         logger.error(f"Error in process_buffered_messages: {e}")
+    finally:
+        setattr(client, f"_processing_{user_id}", False)
+        if message_buffers.get(user_id):
+            setattr(client, f"_processing_{user_id}", True)
+            asyncio.create_task(process_buffered_messages(client, user_id))

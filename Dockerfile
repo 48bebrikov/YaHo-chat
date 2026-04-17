@@ -16,6 +16,9 @@ COPY requirements.txt .
 # Устанавливаем Python зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Chromium for browse_url_visual (Playwright PDF)
+RUN python -m playwright install-deps && python -m playwright install chromium
+
 # Предзагружаем модель SentenceTransformer (deepvk), чтобы она не скачивалась каждый раз при запуске контейнера
 # Это делает образ тяжелее, но запуск быстрее и стабильнее
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('deepvk/USER2-base')"

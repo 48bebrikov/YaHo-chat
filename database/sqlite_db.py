@@ -28,6 +28,10 @@ class UserMetadata(Base):
     last_topic = Column(Text, nullable=True)
     next_check_date = Column(DateTime, nullable=True) # Set by AI when to check next
     consecutive_bot_messages = Column(Integer, default=0) # Tracks if the user is ignoring us
+    # Last news_cache row we forwarded to this friend (proactive); next pick is id > this
+    last_forwarded_news_id = Column(Integer, nullable=True)
+    # Updated immediately when the user sends a private message (before bot reply). Used to avoid proactive pings mid-conversation.
+    last_user_message_at = Column(DateTime, nullable=True)
 
 # Create all tables
 Base.metadata.create_all(bind=engine)
@@ -39,6 +43,20 @@ try:
         conn.commit()
 except Exception:
     pass # Column already exists or other error
+
+try:
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE users_metadata ADD COLUMN last_forwarded_news_id INTEGER"))
+        conn.commit()
+except Exception:
+    pass
+
+try:
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE users_metadata ADD COLUMN last_user_message_at DATETIME"))
+        conn.commit()
+except Exception:
+    pass
 
 def get_db_session():
     """Returns a new DB session."""

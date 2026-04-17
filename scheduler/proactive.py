@@ -1,27 +1,34 @@
 import asyncio
 import logging
 import json
-from datetime import datetime
-from database.sqlite_db import get_db_session, UserMetadata
-from config import POLL_INTERVAL_SECONDS, FRIENDS_LIST
-from ai.gemini_engine import get_gemini_model
-from ai.rag import get_memory_context, save_message_to_memory
-from ai.tools import search_saved_news
+import re
+from datetime import datetime, timedelta
 
+from database.sqlite_db import get_db_session, UserMetadata, NewsCache
+from config import POLL_INTERVAL_SECONDS, FRIENDS_LIST, PROACTIVE_MIN_IDLE_MINUTES
+from google.genai import types
+
+from ai.gemini_engine import (
+    MODEL_ID,
+    complete_tool_response,
+    config_with_tools,
+    get_genai_client,
+)
+from ai.rag import get_memory_context, save_message_to_memory
 logger = logging.getLogger(__name__)
 
-PROACTIVE_PROMPT = """You are deciding whether to proactively text a friend on Telegram.
+PROACTIVE_PROMPT_GENERAL = """You are deciding whether to proactively text a friend on Telegram.
 You are an AI emulating a human friend.
-Here is the context:
+There are NO new channel posts queued for them right now (you cannot forward news in this turn).
+Context:
 - User ID: {user_id}
 - Hours since last interaction: {hours_since}
 - Consecutive messages you sent without reply: {consecutive_messages}
-- Recent news in channels: {news}
 - Current UTC Date & Time: {current_time}
 
 Consider:
-1. Don't spam. If it's been less than a few hours, probably don't text unless there's breaking news.
-2. If it's been a day or more, maybe just say hi or share a news piece.
+1. Don't spam. If it's been less than a few hours, probably don't text unless something important. (The system already avoids pinging while the user was recently active in DM.)
+2. If it's been a day or more, maybe just say hi.
 3. If consecutive_messages == 1 and hours_since > 12, you can send ONE follow up like "ауу", "ты тут?", "игноришь?".
 4. If consecutive_messages >= 2, STOP MESSAGING THEM completely (return should_message=false). Don't be annoying.
 5. Be natural and write in Russian.
@@ -34,6 +41,48 @@ You must respond in valid JSON format ONLY, with this structure:
 }}
 """
 
+PROACTIVE_PROMPT_WITH_FORWARD = """You help decide whether to ping a friend and what SHORT personal line to add in Russian.
+IMPORTANT: The original post from the Telegram channel will be FORWARDED to them as-is (same channel, link, media). You must NOT repeat, summarize, or retell the news — they will read the real post.
+Your job is ONLY an optional 1–2 sentence casual follow-up (or empty if forwarding alone is enough), like a real friend reacting to what you shared.
+Context:
+- User ID: {user_id}
+- Hours since last interaction: {hours_since}
+- Consecutive messages you sent without reply: {consecutive_messages}
+- News post preview (tone only, do not copy): {news_preview}
+- Current UTC Date & Time: {current_time}
+
+Rules:
+1. Same anti-spam rules as usual: if consecutive_messages >= 2, return should_message=false.
+2. message_text must be ONLY your short reaction/comment, NOT the article text.
+3. If a forward alone is enough, set message_text to "".
+
+Respond in valid JSON ONLY:
+{{
+    "should_message": true or false,
+    "message_text": "short Russian comment or empty string",
+    "next_check_hours": integer
+}}
+"""
+
+
+def _pick_news_for_friend(db, user_meta, friend_index: int) -> NewsCache | None:
+    """Next unseen news for this friend; friend_index spreads different items across friends in one poll."""
+    last_id = 0
+    if user_meta and user_meta.last_forwarded_news_id:
+        last_id = user_meta.last_forwarded_news_id
+    pending = (
+        db.query(NewsCache)
+        .filter(NewsCache.id > last_id)
+        .order_by(NewsCache.id.asc())
+        .all()
+    )
+    if not pending:
+        return None
+    if friend_index < len(pending):
+        return pending[friend_index]
+    return None
+
+
 async def proactive_loop(client):
     logger.info(f"Starting proactive loop, interval {POLL_INTERVAL_SECONDS}s")
     while True:
@@ -43,119 +92,141 @@ async def proactive_loop(client):
         except Exception as e:
             logger.error(f"Error in proactive loop: {e}")
 
+
 async def check_and_message_friends(client):
     if not FRIENDS_LIST or FRIENDS_LIST == [""]:
         return
 
     db = get_db_session()
-    model = get_gemini_model()
     try:
-        # 1. Check if it's night time (03:00 to 08:00 in GMT+7)
-        # GMT+7 is UTC+7. So we get UTC time and add 7 hours.
+        gemini_client = get_genai_client()
+    except RuntimeError:
+        logger.error("GEMINI_API_KEY missing; proactive check skipped.")
+        db.close()
+        return
+
+    try:
         current_utc = datetime.utcnow()
-        import datetime as dt
-        current_gmt7 = current_utc + dt.timedelta(hours=7)
+        current_gmt7 = current_utc + timedelta(hours=7)
         if 3 <= current_gmt7.hour < 8:
             logger.info("It's night time (GMT+7). Skipping proactive check.")
             return
 
-        recent_news = search_saved_news("latest")
-        
-        for friend_id in FRIENDS_LIST:
+        for friend_index, friend_id in enumerate(FRIENDS_LIST):
             user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == friend_id).first()
-            
-            hours_since = 24 # default if never interacted
-            consecutive_messages = 0
+
             if user_meta:
                 if user_meta.next_check_date and datetime.utcnow() < user_meta.next_check_date:
-                    continue # Skip this user, it's not time yet
-                
+                    continue
+
+                if user_meta.last_user_message_at:
+                    idle_minutes = (
+                        datetime.utcnow() - user_meta.last_user_message_at
+                    ).total_seconds() / 60
+                    if idle_minutes < PROACTIVE_MIN_IDLE_MINUTES:
+                        logger.info(
+                            f"Skipping proactive for {friend_id}: user wrote {idle_minutes:.0f} min ago "
+                            f"(threshold {PROACTIVE_MIN_IDLE_MINUTES} min)"
+                        )
+                        continue
+
+            hours_since = 24
+            consecutive_messages = 0
+            if user_meta:
                 delta = datetime.utcnow() - user_meta.last_message_date
                 hours_since = round(delta.total_seconds() / 3600, 1)
                 consecutive_messages = user_meta.consecutive_bot_messages or 0
 
-            # Get some RAG context to know the vibe
+            next_news = _pick_news_for_friend(db, user_meta, friend_index)
+
             context = get_memory_context(friend_id, "latest conversation", limit=3)
 
-            prompt = PROACTIVE_PROMPT.format(
-                user_id=friend_id,
-                hours_since=hours_since,
-                consecutive_messages=consecutive_messages,
-                news=recent_news,
-                current_time=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-            )
-            
+            if next_news:
+                preview = (next_news.text or "")[:800]
+                prompt = PROACTIVE_PROMPT_WITH_FORWARD.format(
+                    user_id=friend_id,
+                    hours_since=hours_since,
+                    consecutive_messages=consecutive_messages,
+                    news_preview=preview,
+                    current_time=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                )
+            else:
+                prompt = PROACTIVE_PROMPT_GENERAL.format(
+                    user_id=friend_id,
+                    hours_since=hours_since,
+                    consecutive_messages=consecutive_messages,
+                    current_time=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                )
+
             if context:
                 prompt += f"\n\nRecent conversation context:\n{context}"
 
-            response = model.generate_content(
-                prompt,
-                # We can't strictly enforce response_mime_type=application/json if we want tools to work,
-                # because if the model calls a tool, it returns a function_call part, not a JSON string.
-                # So we let it run normally and parse the text later.
+            first_user = types.UserContent(prompt)
+            response = gemini_client.models.generate_content(
+                model=MODEL_ID,
+                contents=first_user,
+                config=config_with_tools(),
             )
-            
-            # If model decided to use a tool to get more context before deciding
-            if response.parts and hasattr(response.parts[0], 'function_call') and response.parts[0].function_call:
-                fc = response.parts[0].function_call
-                function_name = fc.name
-                args = {k: v for k, v in fc.args.items()}
-                
-                logger.info(f"Proactive Gemini decided to use tool: {function_name}")
-                
-                from ai.tools import search_internet, search_youtube
-                function_response = "Function not found."
-                if function_name == "search_internet":
-                    function_response = search_internet(**args)
-                elif function_name == "search_youtube":
-                    function_response = search_youtube(**args)
-                elif function_name == "search_saved_news":
-                    function_response = search_saved_news(**args)
-                    
-                import google.generativeai as genai
-                # Get the final response
-                response = model.generate_content([
-                    prompt,
-                    response.parts[0],
-                    genai.protos.Part(function_response=genai.protos.FunctionResponse(name=function_name, response={"result": function_response}))
-                ])
+
+            if response.function_calls:
+                logger.info(
+                    f"Proactive Gemini decided to use tool: {response.function_calls[0].name}"
+                )
+                response = complete_tool_response(gemini_client, first_user, response)
 
             try:
-                # Find JSON block in case model wrapped it in markdown like ```json ... ```
-                import re
                 text_response = response.text
-                json_match = re.search(r'```json\n(.*?)\n```', text_response, re.DOTALL)
+                json_match = re.search(r"```json\n(.*?)\n```", text_response, re.DOTALL)
                 if json_match:
                     text_response = json_match.group(1)
-                    
+
                 decision = json.loads(text_response)
                 should_message = decision.get("should_message", False)
-                message_text = decision.get("message_text", "")
+                message_text = (decision.get("message_text") or "").strip()
                 next_check_hours = decision.get("next_check_hours", 4)
 
                 if not user_meta:
                     user_meta = UserMetadata(user_id=friend_id)
                     db.add(user_meta)
 
-                if should_message and message_text:
-                    # Send message
-                    # Assuming friend_id is numeric string, otherwise we need to resolve username
-                    try:
-                        target = int(friend_id)
-                    except ValueError:
-                        target = friend_id # username
-                    
-                    logger.info(f"Proactively sending message to {target}: {message_text}")
-                    await client.send_message(target, message_text)
-                    
-                    save_message_to_memory(friend_id, message_text, role="bot")
-                    
+                try:
+                    target = int(friend_id)
+                except ValueError:
+                    target = friend_id
+
+                if should_message and (next_news or message_text):
+                    delivered = False
+                    if next_news:
+                        try:
+                            from_peer = await client.get_entity(next_news.channel_id)
+                            await client.forward_messages(target, next_news.message_id, from_peer=from_peer)
+                            logger.info(
+                                f"Forwarded news id={next_news.id} from {next_news.channel_id} to {target}"
+                            )
+                            delivered = True
+                        except Exception as ex:
+                            logger.error(
+                                f"Forward failed for news id={next_news.id}, falling back to text only: {ex}"
+                            )
+                            if not message_text:
+                                message_text = (next_news.text or "")[:4096]
+
+                    if message_text:
+                        logger.info(f"Proactively sending comment to {target}: {message_text[:120]}...")
+                        await client.send_message(target, message_text)
+                        save_message_to_memory(friend_id, message_text, role="bot")
+                        delivered = True
+
+                    if next_news and delivered:
+                        user_meta.last_forwarded_news_id = next_news.id
+
                     user_meta.last_message_date = datetime.utcnow()
                     user_meta.consecutive_bot_messages = (user_meta.consecutive_bot_messages or 0) + 1
-                    user_meta.next_check_date = None # reset
+                    user_meta.next_check_date = None
                 else:
-                    logger.info(f"Decided not to message {friend_id}. Checking again in {next_check_hours} hours.")
-                    from datetime import timedelta
+                    logger.info(
+                        f"Decided not to message {friend_id}. Checking again in {next_check_hours} hours."
+                    )
                     user_meta.next_check_date = datetime.utcnow() + timedelta(hours=next_check_hours)
 
                 db.commit()
