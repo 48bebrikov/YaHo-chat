@@ -19,6 +19,10 @@ QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "3600")) # How often to run proactive loop
 # Do not send proactive messages if the user wrote in private within this many minutes (avoids interrupting an active chat)
 PROACTIVE_MIN_IDLE_MINUTES = int(os.getenv("PROACTIVE_MIN_IDLE_MINUTES", "90"))
+# IANA timezone for proactive prompts and night-time skip (default matches previous fixed GMT+7).
+PROACTIVE_LOCAL_TIMEZONE = os.getenv("PROACTIVE_LOCAL_TIMEZONE", "Asia/Bangkok")
+# After a proactive message is sent, wait at least this many hours before the next check for this friend.
+PROACTIVE_COOLDOWN_HOURS_AFTER_SEND = int(os.getenv("PROACTIVE_COOLDOWN_HOURS_AFTER_SEND", "6"))
 MONITORED_CHANNELS = [c.strip() for c in os.getenv("MONITORED_CHANNELS", "").split(",") if c.strip()]
 FRIENDS_LIST = [f.strip() for f in os.getenv("FRIENDS_LIST", "").split(",") if f.strip()]
 

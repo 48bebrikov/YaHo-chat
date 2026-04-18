@@ -3,9 +3,16 @@ import logging
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from database.sqlite_db import db_session, UserMetadata, NewsCache
-from config import POLL_INTERVAL_SECONDS, FRIENDS_LIST, PROACTIVE_MIN_IDLE_MINUTES
+from config import (
+    POLL_INTERVAL_SECONDS,
+    FRIENDS_LIST,
+    PROACTIVE_MIN_IDLE_MINUTES,
+    PROACTIVE_LOCAL_TIMEZONE,
+    PROACTIVE_COOLDOWN_HOURS_AFTER_SEND,
+)
 from google.genai import types
 
 from ai.gemini_engine import (
@@ -25,7 +32,8 @@ Context:
 - User ID: {user_id}
 - Hours since last interaction: {hours_since}
 - Consecutive messages you sent without reply: {consecutive_messages}
-- Current UTC Date & Time: {current_time}
+- Friend local date & time: {friend_local_time}
+- Reference UTC: {current_time_utc}
 
 Consider:
 1. Don't spam. If it's been less than a few hours, probably don't text unless something important. (The system already avoids pinging while the user was recently active in DM.)
@@ -33,6 +41,8 @@ Consider:
 3. If consecutive_messages == 1 and hours_since > 12, you can send ONE follow up like "ауу", "ты тут?", "игноришь?".
 4. If consecutive_messages >= 2, STOP MESSAGING THEM completely (return should_message=false). Don't be annoying.
 5. Be natural and write in Russian.
+6. Use friend local time for morning/evening/night small talk — not UTC alone. Do not say it is "night" if local time is morning or daytime.
+7. Do not repeat the same opening hook or catchphrase as in a recent proactive line; vary wording.
 
 You must respond in valid JSON format ONLY, with this structure:
 {{
@@ -50,12 +60,15 @@ Context:
 - Hours since last interaction: {hours_since}
 - Consecutive messages you sent without reply: {consecutive_messages}
 - News post preview (tone only, do not copy): {news_preview}
-- Current UTC Date & Time: {current_time}
+- Friend local date & time: {friend_local_time}
+- Reference UTC: {current_time_utc}
 
 Rules:
 1. Same anti-spam rules as usual: if consecutive_messages >= 2, return should_message=false.
 2. message_text must be ONLY your short reaction/comment, NOT the article text.
 3. If a forward alone is enough, set message_text to "".
+4. Use friend local time for tone (morning coffee vs late evening). Do not treat UTC as their local "night" or "morning".
+5. Do not reuse the same opening hook as a recent proactive message; vary phrasing.
 
 Respond in valid JSON ONLY:
 {{
@@ -64,6 +77,17 @@ Respond in valid JSON ONLY:
     "next_check_hours": integer
 }}
 """
+
+
+def _proactive_tz() -> ZoneInfo:
+    try:
+        return ZoneInfo(PROACTIVE_LOCAL_TIMEZONE)
+    except Exception:
+        logger.warning(
+            "Invalid PROACTIVE_LOCAL_TIMEZONE %r; using Asia/Bangkok",
+            PROACTIVE_LOCAL_TIMEZONE,
+        )
+        return ZoneInfo("Asia/Bangkok")
 
 
 def _pick_news_for_friend(db, user_meta) -> NewsCache | None:
@@ -112,10 +136,21 @@ async def check_and_message_friends(client):
     try:
         with db_session() as db:
             current_utc = datetime.now(timezone.utc)
-            current_gmt7 = current_utc + timedelta(hours=7)
-            if 3 <= current_gmt7.hour < 8:
-                logger.info("It's night time (GMT+7). Skipping proactive check.")
+            proactive_tz = _proactive_tz()
+            now_local = current_utc.astimezone(proactive_tz)
+            if 3 <= now_local.hour < 8:
+                logger.info(
+                    "It's night time in %s (%s). Skipping proactive check.",
+                    proactive_tz.key,
+                    now_local.strftime("%H:%M"),
+                )
                 return
+
+            tz_label = proactive_tz.key
+            friend_local_time = (
+                f"{now_local.strftime('%Y-%m-%d %H:%M')} ({tz_label}, friend local time)"
+            )
+            current_time_utc = current_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
 
             for friend_index, friend_id in enumerate(FRIENDS_LIST):
                 user_meta = db.query(UserMetadata).filter(UserMetadata.user_id == friend_id).first()
@@ -170,14 +205,16 @@ async def check_and_message_friends(client):
                         hours_since=hours_since,
                         consecutive_messages=consecutive_messages,
                         news_preview=preview,
-                        current_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        friend_local_time=friend_local_time,
+                        current_time_utc=current_time_utc,
                     )
                 else:
                     prompt = PROACTIVE_PROMPT_GENERAL.format(
                         user_id=friend_id,
                         hours_since=hours_since,
                         consecutive_messages=consecutive_messages,
-                        current_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        friend_local_time=friend_local_time,
+                        current_time_utc=current_time_utc,
                     )
 
                 if context:
@@ -228,8 +265,8 @@ async def check_and_message_friends(client):
                     except ValueError:
                         target = friend_id
 
+                    delivered = False
                     if should_message and (next_news or message_text):
-                        delivered = False
                         if next_news:
                             try:
                                 from_peer = await client.get_entity(next_news.channel_id)
@@ -257,7 +294,10 @@ async def check_and_message_friends(client):
 
                         user_meta.last_message_date = datetime.now(timezone.utc)
                         user_meta.consecutive_bot_messages = (user_meta.consecutive_bot_messages or 0) + 1
-                        user_meta.next_check_date = None
+                        cooldown_h = max(1, PROACTIVE_COOLDOWN_HOURS_AFTER_SEND)
+                        user_meta.next_check_date = datetime.now(timezone.utc) + timedelta(
+                            hours=cooldown_h
+                        )
                     else:
                         logger.info(
                             f"Decided not to message {friend_id}. Checking again in {next_check_hours} hours."
