@@ -4,10 +4,11 @@ FROM python:3.12-slim
 # Устанавливаем рабочую директорию в контейнере
 WORKDIR /app
 
-# Устанавливаем системные зависимости, необходимые для сборки некоторых Python пакетов (например, SQLite, crypto)
+# Устанавливаем системные зависимости, необходимые для сборки некоторых Python пакетов (например, SQLite, crypto) и ffmpeg для конвертации аудио
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем файл с зависимостями (сначала только его, чтобы использовать кэш слоев Docker)

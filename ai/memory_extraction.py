@@ -1,10 +1,12 @@
-"""Второй вызов Gemini: что положить в RAG (facts vs dialogue_snippet)."""
+"""Второй вызов LLM: что положить в RAG (facts vs dialogue_snippet)."""
 
 import json
 import logging
 import re
 
-from google.genai import types
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from config import OPENROUTER_API_KEY, OPENROUTER_MODEL_ID
 
 logger = logging.getLogger(__name__)
 
@@ -56,31 +58,43 @@ def extract_memory_items(user_message: str, bot_reply: str, event_utc_iso: str) 
     Возвращает dict с ключами skip_all, items.
     При ошибке парсинга/API — None (вызывающий делает fallback).
     """
-    from ai.chat_engine import MODEL_ID, generate_content_with_retry_sync, get_genai_client
+    if not OPENROUTER_API_KEY:
+        logger.warning("OPENROUTER_API_KEY missing, skipping memory extraction")
+        return None
 
-    client = get_genai_client()
     user_part = MEMORY_EXTRACTOR_USER_TEMPLATE.format(
         event_utc_iso=event_utc_iso,
         user_message=user_message or "",
         bot_reply=bot_reply or "",
     )
-    response = generate_content_with_retry_sync(
-        client,
-        model=MODEL_ID,
-        contents=types.UserContent(user_part),
-        config=types.GenerateContentConfig(
-            system_instruction=MEMORY_EXTRACTOR_SYSTEM,
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        ),
-    )
-    raw = response.text or ""
+    
+    try:
+        llm = ChatOpenAI(
+            model=OPENROUTER_MODEL_ID,
+            api_key=OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
+            temperature=0.0,
+        )
+        
+        response = llm.invoke([
+            SystemMessage(content=MEMORY_EXTRACTOR_SYSTEM),
+            HumanMessage(content=user_part)
+        ])
+        
+        raw = str(response.content)
+    except Exception as e:
+        logger.error(f"Memory extraction LLM call failed: {e}")
+        return None
+
     try:
         data = _parse_json_from_model(raw)
     except (json.JSONDecodeError, TypeError) as e:
         logger.warning("Memory extraction JSON parse failed: %s — raw: %s", e, raw[:500])
         return None
+        
     if not isinstance(data, dict):
         return None
+        
     return data
 
 
