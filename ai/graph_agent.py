@@ -142,15 +142,18 @@ async def run_react_agent(system_prompt: str, user_messages: list, user_id: str)
     sys_prompt_with_id = system_prompt + f"\n\n[SYSTEM] Current user_id: {user_id}"
     messages = [SystemMessage(content=sys_prompt_with_id)]
     
-    # user_messages is expected to be a list of dicts like: {"role": "user"|"bot", "content": "text"} 
-    # Or just raw strings if we concat them.
-    # In gemini_engine, it passes a huge string of history. Let's adapt that.
+    # user_messages is expected to be a list of mixed content (strings, PIL.Image, etc.)
+    # We will wrap them all into a single HumanMessage if they are not BaseMessages
     
+    content_blocks = []
     for msg in user_messages:
-        if isinstance(msg, str):
-            messages.append(HumanMessage(content=msg))
-        elif isinstance(msg, BaseMessage):
+        if isinstance(msg, BaseMessage):
             messages.append(msg)
+        else:
+            content_blocks.append(msg)
+            
+    if content_blocks:
+        messages.append(HumanMessage(content=content_blocks))
             
     # Initial state
     state = {
@@ -166,7 +169,18 @@ async def run_react_agent(system_prompt: str, user_messages: list, user_id: str)
         final_state = await react_agent.ainvoke(state)
         
         last_message = final_state["messages"][-1]
-        return last_message.content
+        
+        content = last_message.content
+        if isinstance(content, list):
+            text_parts = []
+            for block in content:
+                if isinstance(block, str):
+                    text_parts.append(block)
+                elif isinstance(block, dict) and "text" in block:
+                    text_parts.append(block["text"])
+            return "\n".join(text_parts)
+            
+        return str(content)
         
     except Exception as e:
         logger.error(f"Failed to run LangGraph agent: {e}")

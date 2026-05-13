@@ -67,7 +67,7 @@ Rules:
 1. Same anti-spam rules as usual: if consecutive_messages >= 2, return should_message=false.
 2. message_text must be ONLY your short reaction/comment, NOT the article text.
 3. If a forward alone is enough, set message_text to "".
-4. Use friend local time for tone (morning coffee vs late evening). Do not treat UTC as their local "night" or "morning".
+4. Use friend local time for tone (e.g. morning greeting vs late evening). Do not treat UTC as their local "night" or "morning".
 5. Do not reuse the same opening hook as a recent proactive message; vary phrasing.
 
 Respond in valid JSON ONLY:

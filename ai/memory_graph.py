@@ -54,6 +54,15 @@ def analyze_dialogue(state: MemoryState):
         
         # Parse JSON
         text = response.content
+        if isinstance(text, list):
+            text_parts = []
+            for block in text:
+                if isinstance(block, str):
+                    text_parts.append(block)
+                elif isinstance(block, dict) and "text" in block:
+                    text_parts.append(block["text"])
+            text = "\n".join(text_parts)
+            
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
         elif "```" in text:
