@@ -4,12 +4,12 @@ import logging
 from typing import Annotated, Sequence, TypedDict, Literal
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
 from langchain_core.tools import tool
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
-from config import GEMINI_API_KEY, GEMINI_MODEL_ID
+from config import OPENROUTER_API_KEY, OPENROUTER_MODEL_ID
 from ai.tools import search_internet, search_youtube, search_saved_news, browse_url
 from ai.tools_sota import execute_python_code, add_user_reminder
 
@@ -67,12 +67,13 @@ tool_node = ToolNode(tools)
 
 # --- LLM Node ---
 def get_llm():
-    if not GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY is not set.")
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY is not set.")
     # Bind the tools to the LLM
-    llm = ChatGoogleGenerativeAI(
-        model=GEMINI_MODEL_ID,
-        api_key=GEMINI_API_KEY,
+    llm = ChatOpenAI(
+        model=OPENROUTER_MODEL_ID,
+        api_key=OPENROUTER_API_KEY,
+        base_url="https://openrouter.ai/api/v1",
         temperature=0.7,
     )
     return llm.bind_tools(tools)

@@ -131,16 +131,35 @@ def _ddgs_text(query: str, max_results: int = 3):
 
 
 def search_internet(query: str) -> str:
-    """Searches the internet for general information or memes."""
+    """Searches the internet for general information or news using Tavily."""
+    from config import TAVILY_API_KEY
+    if not TAVILY_API_KEY:
+        return "Error: TAVILY_API_KEY is not set. Cannot search."
+        
     try:
-        results = _ddgs_text(query, max_results=3)
+        with httpx.Client() as client:
+            response = client.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": TAVILY_API_KEY,
+                    "query": query,
+                    "search_depth": "basic",
+                    "max_results": 3,
+                    "include_answer": False
+                },
+                timeout=15.0
+            )
+        response.raise_for_status()
+        data = response.json()
+        
+        results = data.get("results", [])
         if not results:
             return "No results found."
 
         snippets = []
         for r in results:
             snippets.append(
-                f"Title: {r.get('title', '')}\nSnippet: {r.get('body', '')}\nLink: {r.get('href', '')}"
+                f"Title: {r.get('title', '')}\nSnippet: {r.get('content', '')}\nLink: {r.get('url', '')}"
             )
 
         return "\n\n".join(snippets)

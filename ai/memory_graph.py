@@ -2,12 +2,12 @@ import logging
 import asyncio
 from typing import TypedDict, Annotated, Sequence, List
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 import json
 
-from config import GEMINI_API_KEY, GEMINI_MODEL_ID
+from config import OPENROUTER_API_KEY, OPENROUTER_MODEL_ID
 from database.qdrant_db import qdrant_db
 
 logger = logging.getLogger(__name__)
@@ -22,11 +22,12 @@ class MemoryState(TypedDict):
     
 # --- LLM ---
 def get_memory_llm():
-    if not GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY is not set.")
-    return ChatGoogleGenerativeAI(
-        model=GEMINI_MODEL_ID,
-        api_key=GEMINI_API_KEY,
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY is not set.")
+    return ChatOpenAI(
+        model=OPENROUTER_MODEL_ID,
+        api_key=OPENROUTER_API_KEY,
+        base_url="https://openrouter.ai/api/v1",
         temperature=0.1,
     )
 

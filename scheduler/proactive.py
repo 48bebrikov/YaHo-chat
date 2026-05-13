@@ -6,21 +6,15 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from database.sqlite_db import db_session, UserMetadata, NewsCache
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from config import OPENROUTER_API_KEY, OPENROUTER_MODEL_ID
 from config import (
     POLL_INTERVAL_SECONDS,
     FRIENDS_LIST,
     PROACTIVE_MIN_IDLE_MINUTES,
     PROACTIVE_LOCAL_TIMEZONE,
     PROACTIVE_COOLDOWN_HOURS_AFTER_SEND,
-)
-from google.genai import types
-
-from ai.gemini_engine import (
-    MODEL_ID,
-    complete_tool_response,
-    config_with_tools,
-    generate_content_with_retry,
-    get_genai_client,
 )
 from ai.rag import get_memory_context
 logger = logging.getLogger(__name__)
@@ -39,7 +33,7 @@ Consider:
 1. Don't spam. If it's been less than a few hours, probably don't text unless something important. (The system already avoids pinging while the user was recently active in DM.)
 2. If it's been a day or more, maybe just say hi.
 3. If consecutive_messages == 1 and hours_since > 12, you can send ONE follow up like "ауу", "ты тут?", "игноришь?".
-4. If consecutive_messages >= 2, STOP MESSAGING THEM completely (return should_message=false). Don't be annoying.
+4. If consecutive_messages > 0 and hours_since < 12, DO NOT message them. If consecutive_messages >= 2, STOP MESSAGING THEM completely (return should_message=false). Don't be annoying.
 5. Be natural and write in Russian.
 6. Use friend local time for morning/evening/night small talk — not UTC alone. Do not say it is "night" if local time is morning or daytime.
 7. Do not repeat the same opening hook or catchphrase as in a recent proactive line; vary wording.
@@ -64,7 +58,7 @@ Context:
 - Reference UTC: {current_time_utc}
 
 Rules:
-1. Same anti-spam rules as usual: if consecutive_messages >= 2, return should_message=false.
+1. Same anti-spam rules as usual: if consecutive_messages > 0 and hours_since < 12, do not message. If consecutive_messages >= 2, return should_message=false.
 2. message_text must be ONLY your short reaction/comment, NOT the article text.
 3. If a forward alone is enough, set message_text to "".
 4. Use friend local time for tone (e.g. morning greeting vs late evening). Do not treat UTC as their local "night" or "morning".
@@ -156,9 +150,16 @@ async def check_and_message_friends(client):
         return
 
     try:
-        gemini_client = get_genai_client()
+        if not OPENROUTER_API_KEY:
+            raise RuntimeError("OPENROUTER_API_KEY missing")
+        llm = ChatOpenAI(
+            model=OPENROUTER_MODEL_ID,
+            api_key=OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
+            temperature=0.7,
+        )
     except RuntimeError:
-        logger.error("GEMINI_API_KEY missing; proactive check skipped.")
+        logger.error("OPENROUTER_API_KEY missing; proactive check skipped.")
         return
 
     try:
@@ -225,6 +226,8 @@ async def check_and_message_friends(client):
                 context = get_memory_context(
                     friend_id, "latest conversation", limit_facts=3, limit_dialogue=3
                 )
+                
+                recent_block = format_recent_chat_block(str(friend_id), "[No new message, deciding if proactive]", 5)
 
                 if next_news:
                     preview = (next_news.text or "")[:800]
@@ -246,35 +249,17 @@ async def check_and_message_friends(client):
                     )
 
                 if context:
-                    prompt += f"\n\nRecent conversation context:\n{context}"
+                    prompt += f"\n\nRecent conversation context (RAG):\n{context}"
+                    
+                prompt += f"\n\nRecent messages:\n{recent_block}"
 
                 prompt_content = [prompt]
-                if next_news and next_news.media_path:
-                    import os
-                    if os.path.exists(next_news.media_path):
-                        import PIL.Image
-                        try:
-                            img = PIL.Image.open(next_news.media_path)
-                            prompt_content.append(img)
-                        except Exception as e:
-                            logger.error(f"Failed to open image {next_news.media_path}: {e}")
-
-                first_user = types.UserContent(prompt_content)
-                response = await generate_content_with_retry(
-                    gemini_client,
-                    model=MODEL_ID,
-                    contents=first_user,
-                    config=config_with_tools(),
-                )
-
-                if response.function_calls:
-                    logger.info(
-                        f"Proactive Gemini decided to use tool: {response.function_calls[0].name}"
-                    )
-                    response = await complete_tool_response(gemini_client, first_user, response)
-
+                # We skip sending images to proactive LLM to be compatible with text-only OpenRouter models
+                
                 try:
-                    text_response = response.text
+                    response = await llm.ainvoke([HumanMessage(content=prompt)])
+                    text_response = str(response.content)
+                    
                     json_match = re.search(r"```json\n(.*?)\n```", text_response, re.DOTALL)
                     if json_match:
                         text_response = json_match.group(1)

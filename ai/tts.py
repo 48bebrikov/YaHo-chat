@@ -110,12 +110,26 @@ async def generate_voice_message(text: str, filepath: str = "voice.wav", voice: 
             # If Telegram complains, we might need to add the WAV header like in the docs.
             wav_data = convert_to_wav(audio_bytes, mime_type or "audio/L16;rate=24000")
             
-            # Change extension to .wav if it was something else
-            if not filepath.endswith('.wav'):
-                filepath = filepath.rsplit('.', 1)[0] + '.wav'
+            is_ogg = filepath.endswith('.ogg')
+            temp_wav_path = filepath if not is_ogg else filepath.rsplit('.', 1)[0] + '.wav'
                 
-            with open(filepath, "wb") as f:
+            with open(temp_wav_path, "wb") as f:
                 f.write(wav_data)
+
+            if is_ogg:
+                import subprocess
+                try:
+                    # Convert to OGG Opus for Telegram voice notes
+                    subprocess.run(
+                        ["ffmpeg", "-y", "-i", temp_wav_path, "-c:a", "libopus", filepath],
+                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    )
+                    os.remove(temp_wav_path)
+                    return filepath
+                except Exception as e:
+                    logger.error(f"FFmpeg conversion to ogg failed: {e}")
+                    return temp_wav_path
+                    
             return filepath
         else:
             logger.error("No inline_data found in TTS response")

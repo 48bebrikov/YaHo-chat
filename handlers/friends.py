@@ -204,7 +204,7 @@ async def process_buffered_messages(client, user_id: str):
                 from ai.tts import generate_voice_message
                 async with client.action(last_event.chat_id, 'record-audio'):
                     for vt in voice_texts:
-                        audio_path = await generate_voice_message(vt, filepath=f"voice_{user_id}_{int(time.time())}.wav")
+                        audio_path = await generate_voice_message(vt, filepath=f"voice_{user_id}_{int(time.time())}.ogg")
                         if audio_path:
                             await client.send_file(last_event.chat_id, audio_path, voice_note=True)
                             try:

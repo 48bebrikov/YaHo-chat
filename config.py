@@ -7,10 +7,16 @@ load_dotenv()
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 
-# Gemini API
+# OpenRouter API
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL_ID = os.getenv("OPENROUTER_MODEL_ID", "moonshotai/kimi-k2.6")
+
+# Gemini API (Still used for TTS / Voice messages)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-3.1-flash-lite")
 TTS_VOICE = os.getenv("TTS_VOICE", "Achernar") # "Aoede", "Callirrhoe", "Kore", "Charon", etc.
+
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
 # Qdrant Database
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")

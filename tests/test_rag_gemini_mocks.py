@@ -120,7 +120,6 @@ async def test_generate_reply_calls_gemini_and_persist(monkeypatch):
 
     monkeypatch.setattr(ga, "run_react_agent", mock_run_react_agent)
 
-    monkeypatch.setattr(ge, "get_genai_client", lambda: mock_client)
     persist_mock = MagicMock()
     monkeypatch.setattr(ge, "persist_conversation_turn", persist_mock)
     
@@ -171,11 +170,6 @@ async def test_generate_reply_builds_prompt_with_context(monkeypatch):
         pass
     monkeypatch.setattr("ai.memory_graph.run_memory_extraction_bg", mock_run_memory_extraction_bg)
 
-    mock_generate_content = AsyncMock()
-    mock_generate_content.return_value = mock_resp
-    mock_client.aio.models.generate_content = mock_generate_content
-
-    monkeypatch.setattr(ge, "get_genai_client", lambda: mock_client)
     monkeypatch.setattr(ge, "persist_conversation_turn", MagicMock())
 
     await ge.generate_reply("u1", "новое")
