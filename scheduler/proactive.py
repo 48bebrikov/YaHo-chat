@@ -16,7 +16,7 @@ from config import (
     PROACTIVE_LOCAL_TIMEZONE,
     PROACTIVE_COOLDOWN_HOURS_AFTER_SEND,
 )
-from ai.rag import get_memory_context
+from ai.rag import get_memory_context, format_recent_chat_block
 logger = logging.getLogger(__name__)
 
 PROACTIVE_PROMPT_GENERAL = """You are deciding whether to proactively text a friend on Telegram.
@@ -119,19 +119,6 @@ def _pick_news_for_friend(db, user_meta) -> NewsCache | None:
         
     # Pick a random news from the recent unseen ones so everyone doesn't get the exact same one
     chosen_news = random.choice(pending)
-    
-    # IMPORTANT: Update to max_id so we skip the rest and don't spam
-    # However, we'll actually update last_forwarded_news_id in the caller after sending
-    # to make sure it was sent successfully. We will return the chosen_news.
-    # The caller does `user_meta.last_forwarded_news_id = next_news.id`.
-    # Wait, if caller sets it to `next_news.id`, and we picked a random one, 
-    # it might be smaller than max_id, meaning next time we could pick something else.
-    # But if we just pick a random one and want to skip everything else, 
-    # we should let the caller update it. We can add a property to the object 
-    # or just set it in the caller. 
-    # Let's change the caller to set it to `max_id` or we just return the random one, 
-    # and the caller does: `user_meta.last_forwarded_news_id = max(user_meta.last_forwarded_news_id, next_news.id)`
-    
     return chosen_news
 
 
