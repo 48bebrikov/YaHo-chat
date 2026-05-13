@@ -186,7 +186,7 @@ async def process_buffered_messages(client, user_id: str):
                 try:
                     reply_text = await asyncio.wait_for(
                         generate_reply(user_id, combined_text, final_media_path),
-                        timeout=90.0
+                        timeout=180.0
                     )
                 except asyncio.TimeoutError:
                     logger.warning(f"generate_reply timed out for {user_id}")
