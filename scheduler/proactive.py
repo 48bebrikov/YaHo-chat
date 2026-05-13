@@ -94,23 +94,51 @@ def _pick_news_for_friend(db, user_meta) -> NewsCache | None:
     """Next unseen news for this friend."""
     if not user_meta:
         return None
+    
+    from sqlalchemy import func
+    import random
+    from datetime import datetime, timezone, timedelta
+    
+    max_id = db.query(func.max(NewsCache.id)).scalar() or 0
+
     if not user_meta.last_forwarded_news_id:
-        from sqlalchemy import func
-        max_id = db.query(func.max(NewsCache.id)).scalar() or 0
         user_meta.last_forwarded_news_id = max_id
         return None
 
     last_id = user_meta.last_forwarded_news_id
+    
+    # Only pick news from the last 24 hours to avoid sending old news
+    yesterday = datetime.now(timezone.utc) - timedelta(hours=24)
+    
     pending = (
         db.query(NewsCache)
         .filter(NewsCache.id > last_id)
-        .order_by(NewsCache.id.asc())
-        .limit(1)
+        .filter(NewsCache.date_added > yesterday)
         .all()
     )
+    
     if not pending:
+        # If there are no pending news, make sure we update the pointer 
+        # so we don't fall behind and start sending old news later
+        user_meta.last_forwarded_news_id = max_id
         return None
-    return pending[0]
+        
+    # Pick a random news from the recent unseen ones so everyone doesn't get the exact same one
+    chosen_news = random.choice(pending)
+    
+    # IMPORTANT: Update to max_id so we skip the rest and don't spam
+    # However, we'll actually update last_forwarded_news_id in the caller after sending
+    # to make sure it was sent successfully. We will return the chosen_news.
+    # The caller does `user_meta.last_forwarded_news_id = next_news.id`.
+    # Wait, if caller sets it to `next_news.id`, and we picked a random one, 
+    # it might be smaller than max_id, meaning next time we could pick something else.
+    # But if we just pick a random one and want to skip everything else, 
+    # we should let the caller update it. We can add a property to the object 
+    # or just set it in the caller. 
+    # Let's change the caller to set it to `max_id` or we just return the random one, 
+    # and the caller does: `user_meta.last_forwarded_news_id = max(user_meta.last_forwarded_news_id, next_news.id)`
+    
+    return chosen_news
 
 
 async def proactive_loop(client):
@@ -290,7 +318,10 @@ async def check_and_message_friends(client):
                         BOT_MESSAGES_SENT_TOTAL.labels(type="proactive").inc()
 
                         if next_news:
-                            user_meta.last_forwarded_news_id = next_news.id
+                            from sqlalchemy import func
+                            from database.sqlite_db import NewsCache
+                            max_id = db.query(func.max(NewsCache.id)).scalar() or next_news.id
+                            user_meta.last_forwarded_news_id = max_id
 
                         user_meta.last_message_date = datetime.now(timezone.utc)
                         user_meta.consecutive_bot_messages = (user_meta.consecutive_bot_messages or 0) + 1

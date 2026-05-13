@@ -58,8 +58,7 @@ def _record_user_message_activity(user_id: str) -> None:
 
 def register_friend_handlers(client, friends_list: list[str]):
     if not friends_list or friends_list == [""]:
-        logger.warning("No friends listed in configuration. Bot will ignore everyone.")
-        return
+        logger.warning("No friends listed in configuration. Bot will reply to everyone.")
 
     @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
     async def handler(event):
@@ -68,8 +67,8 @@ def register_friend_handlers(client, friends_list: list[str]):
         sender_username = sender.username or ""
 
         # Check if the sender is in our friends list (by ID or username)
-        if sender_id not in friends_list and sender_username not in friends_list:
-            return
+        # if sender_id not in friends_list and sender_username not in friends_list:
+        #     return
 
         user_id = sender_id # consistently use ID for Qdrant storage
         
@@ -152,15 +151,15 @@ async def process_buffered_messages(client, user_id: str):
             except Exception as e:
                 logger.error(f"DB Error checking last message: {e}")
                 
-            logger.info(f"Waiting {delay_seconds}s before reading message from {user_id}")
-            await asyncio.sleep(delay_seconds)
+            logger.info(f"Skipping delay_seconds ({delay_seconds}s) before reading message from {user_id}")
+            # await asyncio.sleep(delay_seconds)
             
             # Mark message as read (after delay above — until here, messages stayed "unread")
             await client.send_read_acknowledge(last_event.chat_id)
 
             # Pause as if reading the text on screen, before typing starts
             think_s = random.randint(FRIEND_THINKING_AFTER_READ_MIN, FRIEND_THINKING_AFTER_READ_MAX)
-            await asyncio.sleep(think_s)
+            # await asyncio.sleep(think_s)
 
             action = "typing" if not final_media_path else "document"
             async with client.action(last_event.chat_id, action):
@@ -199,7 +198,7 @@ async def process_buffered_messages(client, user_id: str):
                     typing_delay = min(len(part) / 8, FRIEND_TYPING_PER_PART_MAX)
                     action = "typing" if not final_media_path else "document"
                     async with client.action(last_event.chat_id, action):
-                        await asyncio.sleep(typing_delay)
+                        pass # await asyncio.sleep(typing_delay)
 
                 if i == 0:
                     await last_event.reply(part)
