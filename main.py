@@ -5,7 +5,7 @@ from config import API_ID, API_HASH, MONITORED_CHANNELS, FRIENDS_LIST
 
 from handlers.channels import register_channel_handlers
 from handlers.friends import register_friend_handlers
-from scheduler.proactive import proactive_loop
+from scheduler.proactive import proactive_loop, reminder_loop
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -36,6 +36,7 @@ async def main():
     
     # Start the proactive background loop
     client.loop.create_task(proactive_loop(client))
+    client.loop.create_task(reminder_loop(client))
     
     # Run the client until disconnected
     await client.run_until_disconnected()

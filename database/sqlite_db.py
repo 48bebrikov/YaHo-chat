@@ -31,6 +31,16 @@ class FriendChatLog(Base):
     text = Column(Text)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+class Reminder(Base):
+    """Stores reminders for users."""
+    __tablename__ = "reminders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    text = Column(Text)
+    remind_at = Column(DateTime, index=True)
+    is_sent = Column(Integer, default=0) # 0 = False, 1 = True
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 class UserMetadata(Base):
     """Stores metadata about friends we are talking to, to decide when to message them."""
@@ -74,6 +84,22 @@ except Exception:
 try:
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE users_metadata ADD COLUMN last_user_message_at DATETIME"))
+        conn.commit()
+except Exception:
+    pass
+
+try:
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY,
+                user_id VARCHAR,
+                text TEXT,
+                remind_at DATETIME,
+                is_sent INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
         conn.commit()
 except Exception:
     pass

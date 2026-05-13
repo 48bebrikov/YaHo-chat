@@ -9,6 +9,8 @@ API_HASH = os.getenv("API_HASH", "")
 
 # Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-3.1-flash-lite")
+TTS_VOICE = os.getenv("TTS_VOICE", "Aoede") # "Aoede", "Callirrhoe", "Kore", "Charon", etc.
 
 # Qdrant Database
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")

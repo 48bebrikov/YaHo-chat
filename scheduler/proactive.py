@@ -340,3 +340,43 @@ async def check_and_message_friends(client):
 
     except Exception as e:
         logger.error(f"Failed during check_and_message_friends: {e}")
+
+async def reminder_loop(client):
+    """Background loop that checks for pending reminders every minute."""
+    logger.info("Starting reminder loop (checks every 60s)")
+    while True:
+        try:
+            await asyncio.sleep(60)
+            await check_and_send_reminders(client)
+        except Exception as e:
+            logger.error(f"Error in reminder loop: {e}")
+
+async def check_and_send_reminders(client):
+    from database.sqlite_db import db_session
+    try:
+        from database.sqlite_db import Reminder
+    except ImportError:
+        return
+        
+    try:
+        now = datetime.now(timezone.utc)
+        with db_session() as db:
+            pending = db.query(Reminder).filter(
+                Reminder.is_sent == 0,
+                Reminder.remind_at <= now
+            ).all()
+            
+            for rem in pending:
+                target = rem.user_id
+                try:
+                    target = int(rem.user_id)
+                except ValueError:
+                    pass
+                    
+                msg = f"Напоминание! Ты просил(а) напомнить:\n\n{rem.text}"
+                logger.info(f"Sending reminder to {rem.user_id}: {rem.text}")
+                await client.send_message(target, msg)
+                rem.is_sent = 1
+                
+    except Exception as e:
+        logger.error(f"Failed during check_and_send_reminders: {e}")

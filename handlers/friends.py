@@ -24,19 +24,32 @@ logger = logging.getLogger(__name__)
 
 from collections import defaultdict
 user_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+user_typing_status: dict[str, float] = {}
 
 # Global buffer to store incoming messages
 message_buffers = {}
 
 
 async def _wait_until_quiet_buffer(user_id: str, quiet: float) -> None:
-    """Wait until the buffer stops growing for `quiet` seconds (user finished the burst)."""
+    """Wait until the buffer stops growing and the user stops typing."""
     while True:
         buf = message_buffers.get(user_id)
         if not buf:
             return
         prev_count = len(buf)
-        await asyncio.sleep(quiet)
+        
+        waited = 0.0
+        while waited < quiet:
+            await asyncio.sleep(0.5)
+            waited += 0.5
+            
+            # If the user is currently typing, we keep resetting the wait timer.
+            # Telegram usually sends typing status every ~5 seconds while the user is typing.
+            last_typed = user_typing_status.get(user_id, 0.0)
+            now = asyncio.get_event_loop().time()
+            if now - last_typed < 6.0:
+                waited = 0.0
+                
         buf = message_buffers.get(user_id)
         if not buf:
             return
@@ -59,6 +72,12 @@ def _record_user_message_activity(user_id: str) -> None:
 def register_friend_handlers(client, friends_list: list[str]):
     if not friends_list or friends_list == [""]:
         logger.warning("No friends listed in configuration. Bot will reply to everyone.")
+
+    @client.on(events.UserUpdate)
+    async def typing_handler(event):
+        if getattr(event, 'typing', False):
+            user_id = str(event.user_id)
+            user_typing_status[user_id] = asyncio.get_event_loop().time()
 
     @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
     async def handler(event):
@@ -172,10 +191,33 @@ async def process_buffered_messages(client, user_id: str):
                     logger.warning(f"generate_reply timed out for {user_id}")
                     return
             
-            # Split reply into multiple messages (by newlines or sentence boundaries)
-            # Don't split too aggressively. Only split by newlines, or if the text is very long, by punctuation.
-            # But avoid splitting every single short sentence.
-            parts = [p.strip() for p in re.split(r'\n+', reply_text) if p.strip()]
+            # Check for <voice> tags
+            voice_matches = re.finditer(r'<voice>(.*?)</voice>', reply_text, re.DOTALL)
+            voice_texts = [match.group(1).strip() for match in voice_matches]
+            
+            # Remove voice tags from text
+            reply_text = re.sub(r'<voice>.*?</voice>', '', reply_text, flags=re.DOTALL).strip()
+            
+            # Send voice messages first if any
+            if voice_texts:
+                from ai.tts import generate_voice_message
+                async with client.action(last_event.chat_id, 'record-audio'):
+                    for vt in voice_texts:
+                        audio_path = await generate_voice_message(vt, filepath=f"voice_{user_id}_{int(time.time())}.wav")
+                        if audio_path:
+                            await client.send_file(last_event.chat_id, audio_path, voice_note=True)
+                            try:
+                                os.remove(audio_path)
+                            except OSError:
+                                pass
+
+            if not reply_text:
+                parts = []
+            else:
+                # Split reply into multiple messages (by newlines or sentence boundaries)
+                # Don't split too aggressively. Only split by newlines, or if the text is very long, by punctuation.
+                # But avoid splitting every single short sentence.
+                parts = [p.strip() for p in re.split(r'\n+', reply_text) if p.strip()]
             
             final_parts = []
             for p in parts:

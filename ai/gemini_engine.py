@@ -6,7 +6,7 @@ import time
 from google import genai
 from google.genai import errors, types
 
-from config import GEMINI_API_KEY, RECENT_CHAT_WINDOW_MESSAGES
+from config import GEMINI_API_KEY, RECENT_CHAT_WINDOW_MESSAGES, GEMINI_MODEL_ID
 
 from ai.tools import (
     browse_url,
@@ -19,7 +19,7 @@ from ai.rag import format_recent_chat_block, get_memory_context, persist_convers
 
 logger = logging.getLogger(__name__)
 
-MODEL_ID = "gemini-3.1-flash-lite-preview"
+MODEL_ID = GEMINI_MODEL_ID
 
 SYSTEM_PROMPT = """
 Вы общаетесь со своим другом в мессенджере Telegram.
@@ -48,19 +48,23 @@ SYSTEM_PROMPT = """
 
 [Обычный разговор]
 Друг: я сегодня пробежал 5 км!
-Ты: ого, ну ты даешь) я бы после первого километра уже легла спать
+Ты: ого, ну ты даешь) 
+Ты: я бы после первого километра ухайдокалась
 
 [Серьезный момент]
 Друг: не знаю чего хочу от жизни вообще
 Ты: понимаю, у меня тоже бывают такие загоны... может тебе просто нужно отдохнуть?
+Ты: у меня тоже бывают такие загоны... может тебе просто нужно отдохнуть?
 
 [Обида / Отказ]
 Друг: я не смогу сегодня увидеться
-Ты: жаль( ну ладно, в другой раз тогда
+Ты: жаль( 
+Ты: ну ладно, в другой раз тогда
 
 [Реакция на короткий ответ]
 Друг: норм
-Ты: что-то случилось? или просто устал?
+Ты: что-то случилось? 
+Ты: или просто устал?
 
 === ПРАВИЛА ИСПОЛЬЗОВАНИЯ ИНСТРУМЕНТОВ ===
 Вы — человек, девушка. Но у вас в телефоне всегда открыт браузер. Гуглить информацию, новости или факты для друга — это АБСОЛЮТНО НОРМАЛЬНО, не отказывайте в этом.
@@ -71,7 +75,15 @@ SYSTEM_PROMPT = """
 - Если прислали ссылку для текста/статистики/HTML — используйте инструмент `browse_url`.
 - Если по контексту важны картинки, графики или визуал страницы — используйте `browse_url_visual` (pdf из браузера, медленнее, но точнее для графики).
 
-НИКОГДА не признавайтесь, что вы ИИ, языковая модель, бот или ассистент. Вы — обычная живая девушка Катя по ту сторону экрана смартфона.
+ГОЛОСОВЫЕ СООБЩЕНИЯ:
+Вы можете отправлять ГОЛОСОВЫЕ сообщения (аудио), когда хотите передать эмоцию или если вас об этом попросили (например, "запиши гс", "скажи голосом"). 
+Чтобы отправить голосовое сообщение, просто оберните свой текст в тег <voice>. 
+Внутри тега <voice> вы МОЖЕТЕ использовать эмоциональные теги Gemini TTS (например: [laughs], [sigh], [giggles], [tired], [sarcastic], [whispering], [enthusiasm], [curious]).
+Пример:
+<voice>[giggles] Ой, да ладно тебе! [sigh] Я вообще не ожидала такого.</voice>
+Вы можете комбинировать текст и голосовое сообщение в одном ответе.
+
+НИКОГДА не признавайтесь, что вы ИИ, языковая модель, бот или ассистент. Вы — обычная живая девушка.
 """
 
 _client: genai.Client | None = None
@@ -252,6 +264,7 @@ def _model_function_call_part(response: types.GenerateContentResponse) -> types.
     return None
 
 
+# Deprecated function (kept for proactive loop if needed)
 async def complete_tool_response(
     client: genai.Client,
     first_user: types.UserContent,
@@ -336,8 +349,6 @@ async def complete_tool_response(
 
 async def generate_reply(user_id: str, message: str, media_path: str = None) -> str:
     """Generates a reply from Gemini taking into account RAG memory and optional media."""
-    client = get_genai_client()
-
     recent_block = format_recent_chat_block(user_id, message, RECENT_CHAT_WINDOW_MESSAGES)
     rag_context = get_memory_context(user_id, message, limit_facts=5, limit_dialogue=5)
 
@@ -363,8 +374,8 @@ async def generate_reply(user_id: str, message: str, media_path: str = None) -> 
 
     if media_path and os.path.exists(media_path):
         import PIL.Image
-
         try:
+            # LangGraph/LangChain Google GenAI currently supports passing PIL Images natively
             img = PIL.Image.open(media_path)
             prompt.append(img)
         except Exception as e:
@@ -372,18 +383,10 @@ async def generate_reply(user_id: str, message: str, media_path: str = None) -> 
 
     prompt.append(prompt_text)
 
-    first_user = types.UserContent(prompt)
-    response = await generate_content_with_retry(
-        client,
-        model=MODEL_ID,
-        contents=first_user,
-        config=config_with_tools(),
-    )
-
-    if response.function_calls:
-        response = await complete_tool_response(client, first_user, response)
-
-    reply_text = response.text or ""
+    from ai.graph_agent import run_react_agent
+    
+    # We pass the system prompt and the formatted prompt block to the ReAct agent
+    reply_text = await run_react_agent(SYSTEM_PROMPT, prompt, user_id)
 
     now_save = datetime.datetime.now(datetime.timezone.utc)
     import asyncio
@@ -402,5 +405,9 @@ async def generate_reply(user_id: str, message: str, media_path: str = None) -> 
     asyncio.create_task(
         asyncio.to_thread(append_friend_chat_turn, user_id, message, reply_text)
     )
+    
+    # Trigger async Memory Graph execution to extract long-term facts
+    from ai.memory_graph import run_memory_extraction_bg
+    asyncio.create_task(run_memory_extraction_bg(user_id, message, reply_text))
 
     return reply_text
