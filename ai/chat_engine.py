@@ -64,7 +64,7 @@ SYSTEM_PROMPT = """
 ГОЛОСОВЫЕ СООБЩЕНИЯ:
 Вы можете отправлять ГОЛОСОВЫЕ сообщения (аудио), когда хотите передать эмоцию или если вас об этом попросили (например, "запиши гс", "скажи голосом"). 
 Чтобы отправить голосовое сообщение, просто оберните свой текст в тег <voice>. 
-Внутри тега <voice> вы МОЖЕТЕ использовать эмоциональные теги Gemini TTS (например: [laughs], [sigh], [giggles], [tired], [sarcastic], [whispering], [enthusiasm], [curious]).
+Внутри тега <voice> вы МОЖЕТЕ использовать эмоциональные теги Gemini TTS (например: [laughs], [sigh], [giggles], [tired], [sarcastic], [whispering], [enthusiasm], [curious] и множество других!).
 Пример:
 <voice>[giggles] Ой, да ладно тебе! [sigh] Я вообще не ожидала такого.</voice>
 Вы можете комбинировать текст и голосовое сообщение в одном ответе.
@@ -84,14 +84,14 @@ async def generate_reply(user_id: str, message: str, media_path: str = None) -> 
     if rag_context:
         prompt_text = (
             f"{recent_block}\n\n"
-            "Here is long-term memory from the past (RAG; may overlap with the lines above):\n"
+            "Сдесь должна быть долгосрочная память из прошлых диалогов (RAG; может пересекаться с линиями выше):\n"
             f"{rag_context}\n\n"
-            "Reply naturally. The friend's latest message is the last line in the recent block above."
+            "Отвечай естественно. Последнее сообщение друга - это последняя строка в блоке выше."
         )
     else:
         prompt_text = (
             f"{recent_block}\n\n"
-            "Reply naturally. The friend's latest message is the last line in the recent block above."
+            "Отвечай естественно. Последнее сообщение друга - это последняя строка в блоке выше."
         )
 
     import datetime
@@ -117,7 +117,7 @@ async def generate_reply(user_id: str, message: str, media_path: str = None) -> 
     from ai.graph_agent import run_react_agent
     
     # We pass the system prompt and the formatted prompt block to the ReAct agent
-    reply_text = await run_react_agent(SYSTEM_PROMPT, [prompt_content], user_id)
+    reply_text = await run_react_agent(SYSTEM_PROMPT, prompt_content, user_id)
 
     now_save = datetime.datetime.now(datetime.timezone.utc)
     import asyncio

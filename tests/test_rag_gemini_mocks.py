@@ -17,14 +17,14 @@ class _FakePoint:
 @pytest.fixture(scope="module", autouse=True)
 def _stub_embedder_module():
     """Подменяет ai.embedder до импорта rag, чтобы не тянуть sentence_transformers."""
-    for mod in ("ai.gemini_engine", "ai.rag", "ai.embedder", "ai.memory_extraction"):
+    for mod in ("ai.chat_engine", "ai.rag", "ai.embedder", "ai.memory_extraction"):
         sys.modules.pop(mod, None)
     fake = types.ModuleType("ai.embedder")
     fake.embedder = MagicMock()
     fake.embedder.get_embedding.return_value = [0.1] * 768
     sys.modules["ai.embedder"] = fake
     yield
-    for mod in ("ai.gemini_engine", "ai.rag", "ai.embedder", "ai.memory_extraction"):
+    for mod in ("ai.chat_engine", "ai.rag", "ai.embedder", "ai.memory_extraction"):
         sys.modules.pop(mod, None)
 
 
@@ -106,7 +106,7 @@ async def test_generate_reply_calls_gemini_and_persist(monkeypatch):
     monkeypatch.setattr("database.sqlite_db.fetch_previous_friend_messages", lambda uid, lim: [])
     monkeypatch.setattr("database.sqlite_db.append_friend_chat_turn", MagicMock())
 
-    import ai.gemini_engine as ge
+    import ai.chat_engine as ge
     import ai.graph_agent as ga
 
     mock_client = MagicMock()
@@ -149,7 +149,7 @@ async def test_generate_reply_builds_prompt_with_context(monkeypatch):
     monkeypatch.setattr("database.sqlite_db.fetch_previous_friend_messages", lambda uid, lim: [])
     monkeypatch.setattr("database.sqlite_db.append_friend_chat_turn", MagicMock())
 
-    import ai.gemini_engine as ge
+    import ai.chat_engine as ge
     import ai.graph_agent as ga
 
     mock_client = MagicMock()
@@ -176,6 +176,6 @@ async def test_generate_reply_builds_prompt_with_context(monkeypatch):
     
     # Assert on the prompt passed to run_react_agent instead of mock_generate_content
     blob = react_args.get("prompt", "")
-    assert "Recent conversation" in blob
-    assert "long-term memory" in blob
+    assert "Recent conversation" in blob or "Последнее сообщение друга" in blob
+    assert "долгосрочная память" in blob
     assert "раньше" in blob and "новое" in blob

@@ -25,7 +25,7 @@ flake8:
 #  script:
 #    - docker build -t $CI_REGISTRY_IMAGE/userbot:latest .
 
-# Стадия тестов: pytest (без импорта gemini_engine/rag/embedder — тяжёлые зависимости)
+# Стадия тестов: pytest (без импорта chat_engine/rag/embedder — тяжёлые зависимости)
 test_imports:
   stage: test
   image: python:3.12-slim

@@ -128,7 +128,7 @@ def build_agent_graph():
     
     # Compile
     # We can add memory here if we want persistence across turns, but for now
-    # our `gemini_engine.py` passes the whole history + RAG, so it's stateless here.
+    # our `chat_engine.py` passes the whole history + RAG, so it's stateless here.
     return workflow.compile()
 
 # Singleton graph instance

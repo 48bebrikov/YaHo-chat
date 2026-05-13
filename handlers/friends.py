@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from telethon import events
 
-from ai.gemini_engine import generate_reply
+from ai.chat_engine import generate_reply
 from config import (
     BUFFER_QUIET_SECONDS,
     FRIEND_REPLY_DELAY_COLD_MAX,
