@@ -8,7 +8,7 @@ from langgraph.graph.message import add_messages
 import json
 
 from config import GEMINI_API_KEY, GEMINI_MODEL_ID
-from ai.rag import qdrant_client
+from database.qdrant_db import qdrant_db
 
 logger = logging.getLogger(__name__)
 
@@ -86,33 +86,26 @@ def update_database(state: MemoryState):
         logger.error(f"Failed to update user topic in sqlite: {e}")
 
     # 2. Save facts to Qdrant (Knowledge Graph approximation)
-    if facts and qdrant_client:
-        import uuid
-        from fastembed import TextEmbedding
+    if facts and qdrant_db:
         try:
-            # Reusing the model from ai.rag if possible, or initializing a simple one.
-            # In YaHo we just used generic qdrant points. We will use the existing `ai.rag.embed_model`
-            from ai.rag import embed_model
+            import time
+            from datetime import datetime, timezone
+            now_ts = time.time()
+            iso_now = datetime.fromtimestamp(now_ts, tz=timezone.utc).isoformat()
+            
+            # Reusing the existing embedding saving logic
+            from ai.rag import _save_embedding_point
             
             for fact in facts:
                 # Add "User: " prefix to make it clear this is about the user
                 text = f"Fact about user: {fact}"
-                embs = list(embed_model.embed([text]))
-                vector = embs[0].tolist()
-                
-                point_id = str(uuid.uuid4())
-                
-                qdrant_client.upsert(
-                    collection_name=f"chat_{user_id}",
-                    points=[{
-                        "id": point_id,
-                        "vector": vector,
-                        "payload": {
-                            "text": text,
-                            "type": "fact",
-                            "timestamp": __import__("datetime").datetime.now().timestamp()
-                        }
-                    }]
+                _save_embedding_point(
+                    user_id=user_id,
+                    text=text,
+                    role="system",
+                    kind="fact",
+                    sort_ts=now_ts,
+                    event_utc_iso=iso_now
                 )
                 logger.info(f"Memory Graph: Saved fact for {user_id}: {fact}")
         except Exception as e:

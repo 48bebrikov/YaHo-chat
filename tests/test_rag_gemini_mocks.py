@@ -107,21 +107,26 @@ async def test_generate_reply_calls_gemini_and_persist(monkeypatch):
     monkeypatch.setattr("database.sqlite_db.append_friend_chat_turn", MagicMock())
 
     import ai.gemini_engine as ge
+    import ai.graph_agent as ga
 
     mock_client = MagicMock()
     mock_resp = MagicMock()
     mock_resp.text = "короткий ответ"
     mock_resp.function_calls = None
     mock_resp.usage_metadata = None
-    
-    async def mock_generate_content(*args, **kwargs):
-        return mock_resp
-        
-    mock_client.aio.models.generate_content = mock_generate_content
+
+    async def mock_run_react_agent(*args, **kwargs):
+        return "короткий ответ"
+
+    monkeypatch.setattr(ga, "run_react_agent", mock_run_react_agent)
 
     monkeypatch.setattr(ge, "get_genai_client", lambda: mock_client)
     persist_mock = MagicMock()
     monkeypatch.setattr(ge, "persist_conversation_turn", persist_mock)
+    
+    async def mock_run_memory_extraction_bg(*args, **kwargs):
+        pass
+    monkeypatch.setattr("ai.memory_graph.run_memory_extraction_bg", mock_run_memory_extraction_bg)
 
     out = await ge.generate_reply("u42", "привет")
     assert out == "короткий ответ"
@@ -146,13 +151,26 @@ async def test_generate_reply_builds_prompt_with_context(monkeypatch):
     monkeypatch.setattr("database.sqlite_db.append_friend_chat_turn", MagicMock())
 
     import ai.gemini_engine as ge
+    import ai.graph_agent as ga
 
     mock_client = MagicMock()
     mock_resp = MagicMock()
     mock_resp.text = "ok"
     mock_resp.function_calls = None
     mock_resp.usage_metadata = None
+
+    # Track arguments passed to run_react_agent
+    react_args = {}
+    async def mock_run_react_agent(system_prompt, user_messages, user_id):
+        react_args['prompt'] = str(user_messages)
+        return mock_resp.text
+
+    monkeypatch.setattr(ga, "run_react_agent", mock_run_react_agent)
     
+    async def mock_run_memory_extraction_bg(*args, **kwargs):
+        pass
+    monkeypatch.setattr("ai.memory_graph.run_memory_extraction_bg", mock_run_memory_extraction_bg)
+
     mock_generate_content = AsyncMock()
     mock_generate_content.return_value = mock_resp
     mock_client.aio.models.generate_content = mock_generate_content
@@ -161,8 +179,9 @@ async def test_generate_reply_builds_prompt_with_context(monkeypatch):
     monkeypatch.setattr(ge, "persist_conversation_turn", MagicMock())
 
     await ge.generate_reply("u1", "новое")
-    kwargs = mock_generate_content.call_args.kwargs
-    blob = str(kwargs.get("contents", ""))
+    
+    # Assert on the prompt passed to run_react_agent instead of mock_generate_content
+    blob = react_args.get("prompt", "")
     assert "Recent conversation" in blob
     assert "long-term memory" in blob
     assert "раньше" in blob and "новое" in blob
