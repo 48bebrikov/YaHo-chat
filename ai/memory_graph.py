@@ -24,11 +24,13 @@ class MemoryState(TypedDict):
 def get_memory_llm():
     if not OPENROUTER_API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not set.")
+    from ai.metrics import PrometheusCallbackHandler
     return ChatOpenAI(
         model=OPENROUTER_MODEL_ID,
         api_key=OPENROUTER_API_KEY,
         base_url="https://openrouter.ai/api/v1",
         temperature=0.1,
+        callbacks=[PrometheusCallbackHandler()]
     )
 
 # --- Nodes ---

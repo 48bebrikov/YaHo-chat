@@ -69,11 +69,13 @@ def extract_memory_items(user_message: str, bot_reply: str, event_utc_iso: str) 
     )
     
     try:
+        from ai.metrics import PrometheusCallbackHandler
         llm = ChatOpenAI(
             model=OPENROUTER_MODEL_ID,
             api_key=OPENROUTER_API_KEY,
             base_url="https://openrouter.ai/api/v1",
             temperature=0.0,
+            callbacks=[PrometheusCallbackHandler()]
         )
         
         response = llm.invoke([

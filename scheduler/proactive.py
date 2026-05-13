@@ -139,11 +139,13 @@ async def check_and_message_friends(client):
     try:
         if not OPENROUTER_API_KEY:
             raise RuntimeError("OPENROUTER_API_KEY missing")
+        from ai.metrics import PrometheusCallbackHandler
         llm = ChatOpenAI(
             model=OPENROUTER_MODEL_ID,
             api_key=OPENROUTER_API_KEY,
             base_url="https://openrouter.ai/api/v1",
             temperature=0.7,
+            callbacks=[PrometheusCallbackHandler()]
         )
     except RuntimeError:
         logger.error("OPENROUTER_API_KEY missing; proactive check skipped.")

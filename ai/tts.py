@@ -79,6 +79,8 @@ async def generate_voice_message(text: str, filepath: str = "voice.wav", voice: 
     full_text = f"{style_prompt}\n\nText: {text}"
     
     try:
+        from ai.metrics import Timer, LLM_REQUESTS_TOTAL, LLM_TOKENS_TOTAL
+        
         config = types.GenerateContentConfig(
             response_modalities=["audio"],
             speech_config=types.SpeechConfig(
@@ -90,11 +92,21 @@ async def generate_voice_message(text: str, filepath: str = "voice.wav", voice: 
             )
         )
         
-        response = await client.aio.models.generate_content(
-            model="gemini-3.1-flash-tts-preview",
-            contents=full_text,
-            config=config
-        )
+        from ai.metrics import LLM_REQUEST_LATENCY
+        with Timer(LLM_REQUEST_LATENCY, model="gemini-3.1-flash-tts-preview"):
+            response = await client.aio.models.generate_content(
+                model="gemini-3.1-flash-tts-preview",
+                contents=full_text,
+                config=config
+            )
+            
+        LLM_REQUESTS_TOTAL.labels(model="gemini-3.1-flash-tts-preview", status="success").inc()
+        
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            if hasattr(response.usage_metadata, "prompt_token_count") and response.usage_metadata.prompt_token_count:
+                LLM_TOKENS_TOTAL.labels(model="gemini-3.1-flash-tts-preview", token_type="prompt").inc(response.usage_metadata.prompt_token_count)
+            if hasattr(response.usage_metadata, "candidates_token_count") and response.usage_metadata.candidates_token_count:
+                LLM_TOKENS_TOTAL.labels(model="gemini-3.1-flash-tts-preview", token_type="completion").inc(response.usage_metadata.candidates_token_count)
         
         audio_bytes = None
         mime_type = ""
@@ -136,5 +148,7 @@ async def generate_voice_message(text: str, filepath: str = "voice.wav", voice: 
             return None
             
     except Exception as e:
+        from ai.metrics import LLM_REQUESTS_TOTAL
+        LLM_REQUESTS_TOTAL.labels(model="gemini-3.1-flash-tts-preview", status="error").inc()
         logger.error(f"Exception during TTS generation: {e}")
         return None
