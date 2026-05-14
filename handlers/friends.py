@@ -86,11 +86,12 @@ def register_friend_handlers(client, friends_list: list[str]):
         sender_id = str(sender.id)
         sender_username = sender.username or ""
 
-        # Check if the sender is in our friends list (by ID or username)
-        # if sender_id not in friends_list and sender_username not in friends_list:
-        #     return
-
         user_id = sender_id # consistently use ID for Qdrant storage
+        
+        # Сбрасываем статус "печатает", так как пользователь только что отправил сообщение.
+        # Иначе _wait_until_quiet_buffer будет ложно ждать еще 6 секунд после отправки.
+        if user_id in user_typing_status:
+            user_typing_status[user_id] = 0.0
         
         # Add to buffer to aggregate multiple fast messages
         if user_id not in message_buffers:
@@ -138,7 +139,16 @@ async def process_buffered_messages(client, user_id: str):
             return
 
         # Combine text from all messages
-        combined_text = "\n".join([m["text"] for m in messages if m["text"]])
+        combined_text_parts = []
+        for m in messages:
+            if m["text"]:
+                msg_id = m["event"].id
+                combined_text_parts.append(f"[msg_id: {msg_id}] {m['text']}")
+            elif m["media_path"]:
+                msg_id = m["event"].id
+                combined_text_parts.append(f"[msg_id: {msg_id}] [Пользователь прислал медиа]")
+                
+        combined_text = "\n".join(combined_text_parts)
         
         # Grab the last media path if there are multiple
         media_paths = [m["media_path"] for m in messages if m["media_path"]]
@@ -192,12 +202,23 @@ async def process_buffered_messages(client, user_id: str):
                     logger.warning(f"generate_reply timed out for {user_id}")
                     return
             
+            # Check for <reply_to_id> tags
+            reply_to_match = re.search(r'<reply_to_id>(\d+)</reply_to_id>', reply_text)
+            reply_to_msg_id = None
+            if reply_to_match:
+                reply_to_msg_id = int(reply_to_match.group(1))
+                reply_text = re.sub(r'<reply_to_id>\d+</reply_to_id>', '', reply_text).strip()
+
             # Check for <voice> tags
             voice_matches = re.finditer(r'<voice>(.*?)</voice>', reply_text, re.DOTALL)
             voice_texts = [match.group(1).strip() for match in voice_matches]
             
             # Remove voice tags from text
             reply_text = re.sub(r'<voice>.*?</voice>', '', reply_text, flags=re.DOTALL).strip()
+            
+            # Clean up potential unclosed tags or artifacts left by the LLM
+            reply_text = re.sub(r'</?voice>', '', reply_text).strip()
+            reply_text = re.sub(r'</?reply_to_id[^>]*>', '', reply_text).strip()
             
             # Send voice messages first if any
             if voice_texts:
@@ -206,7 +227,7 @@ async def process_buffered_messages(client, user_id: str):
                     for vt in voice_texts:
                         audio_path = await generate_voice_message(vt, filepath=f"voice_{user_id}_{int(time.time())}.ogg")
                         if audio_path:
-                            await client.send_file(last_event.chat_id, audio_path, voice_note=True)
+                            await client.send_file(last_event.chat_id, audio_path, voice_note=True, reply_to=reply_to_msg_id)
                             try:
                                 os.remove(audio_path)
                             except OSError:
@@ -218,7 +239,7 @@ async def process_buffered_messages(client, user_id: str):
                 # Split reply into multiple messages (by newlines or sentence boundaries)
                 # Don't split too aggressively. Only split by newlines, or if the text is very long, by punctuation.
                 # But avoid splitting every single short sentence.
-                parts = [p.strip() for p in re.split(r'\n+', reply_text) if p.strip()]
+                parts = [p.strip() for p in re.split(r'\n+', reply_text) if p.strip() and p.strip() not in ('<', '>')]
             
             final_parts = []
             for p in parts:
@@ -243,10 +264,7 @@ async def process_buffered_messages(client, user_id: str):
                     async with client.action(last_event.chat_id, action):
                         pass # await asyncio.sleep(typing_delay)
 
-                if i == 0:
-                    await last_event.reply(part)
-                else:
-                    await last_event.respond(part)
+                await last_event.respond(part, reply_to=reply_to_msg_id)
             
             from ai.metrics import BOT_MESSAGES_SENT_TOTAL
             BOT_MESSAGES_SENT_TOTAL.labels(type="reply").inc()

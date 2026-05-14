@@ -35,7 +35,7 @@ MONITORED_CHANNELS = [c.strip() for c in os.getenv("MONITORED_CHANNELS", "").spl
 FRIENDS_LIST = [f.strip() for f in os.getenv("FRIENDS_LIST", "").split(",") if f.strip()]
 
 # Private chat: merge several user messages into one reply (seconds of silence before processing)
-BUFFER_QUIET_SECONDS = float(os.getenv("BUFFER_QUIET_SECONDS", "5"))
+BUFFER_QUIET_SECONDS = float(os.getenv("BUFFER_QUIET_SECONDS", "2"))
 # Simulated delay before "reading" and replying (seconds)
 FRIEND_REPLY_DELAY_COLD_MIN = int(os.getenv("FRIEND_REPLY_DELAY_COLD_MIN", "60"))
 FRIEND_REPLY_DELAY_COLD_MAX = int(os.getenv("FRIEND_REPLY_DELAY_COLD_MAX", "600"))

@@ -82,13 +82,13 @@ def get_llm():
     )
     return llm.bind_tools(tools)
 
-def call_model(state: AgentState):
+async def call_model(state: AgentState):
     """Invokes the agent model to generate a response based on the current state."""
     messages = state["messages"]
     llm = get_llm()
     
     try:
-        response = llm.invoke(messages)
+        response = await llm.ainvoke(messages)
         # We return a dict, because this is added to the state
         return {"messages": [response]}
     except Exception as e:
