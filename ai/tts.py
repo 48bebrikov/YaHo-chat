@@ -3,6 +3,7 @@ import logging
 from google import genai
 from google.genai import types
 from config import GEMINI_API_KEY, TTS_VOICE
+from i18n import get_copy
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ async def generate_voice_message(text: str, filepath: str = "voice.wav", voice: 
     
     # Optional styling prompt for the TTS model
     if not style_prompt:
-        style_prompt = "Ты - 20-летняя девушка Катя. Говори натурально, весело, эмоционально."
+        style_prompt = get_copy().tts_style_prompt
         
     # The API accepts prompt instructions prepended to the text
     full_text = f"{style_prompt}\n\nText: {text}"

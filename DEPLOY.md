@@ -1,70 +1,74 @@
-# Развертывание бота (Docker) и отправка в GitLab
+# Deploying the bot (Docker) and pushing to GitLab
 
-Здесь описаны шаги для запуска проекта локально через Docker, а также для пуша (отправки) вашего кода в удаленный репозиторий GitLab 
+This file covers running the project locally with Docker and pushing your code to a remote GitLab repository.
 
-## 1. Отправка кода в GitLab (CI/CD)
+## 1. Push the code to GitLab (CI/CD)
 
-Чтобы запушить (отправить) текущий проект в ваш репозиторий на GitLab, выполните следующие шаги в терминале в папке проекта:
+To push the current project to your GitLab repository, run the following in the project folder:
 
-1. **Инициализируйте локальный Git-репозиторий:** (уже сделано)
+1. **Initialize a local Git repository:** (already done)
   ```bash
    git init
   ```
-2. **Добавьте все нужные файлы в индекс Git:**
+2. **Stage all required files:**
   ```bash
    git add .
   ```
-3. **Сделайте коммит:**
+3. **Create a commit:**
   ```bash
    git commit -m "Your commit message"
   ```
-4. **Отправьте код в ветку `main`:**
+4. **Push the code to the** `main` **branch:**
   ```bash
    git push origin main
   ```
 
-После выполнения команды `push`, ваш код окажется на GitLab. Так как я добавил файл `.gitlab-ci.yml`, GitLab автоматически запустит **CI/CD pipeline** (конвейер).
+After `push`, your code will be on GitLab. Because `.gitlab-ci.yml` is included, GitLab will automatically start a **CI/CD pipeline**.
 
-## 2. Развертывание на вашем сервере (Production)
+## 2. Deploying on your server (production)
 
-Так как вы не храните `.env` и файлы сессии в GitLab (это правильно, ради безопасности), на сервере нужно будет один раз их создать руками.
+You do not store `.env` or session files in GitLab (which is correct for security), so you need to create them once by hand on the server.
 
-Предполагается, что на вашем сервере уже установлен **Docker** и **Docker Compose**, а также **Git**.
+This assumes **Docker**, **Docker Compose**, and **Git** are already installed on the server.
 
-### Шаг 1. Клонирование репозитория на сервер
+### Step 1. Clone the repository on the server
 
-Подключитесь к вашему серверу по SSH.
+Connect to your server over SSH.
 
-Так как ваш репозиторий может быть приватным, а аккаунт GitLab создан через GitHub, вам потребуется **Personal Access Token (PAT)** вместо обычного пароля:
+If the repository is private and the GitLab account was created via GitHub, you will need a **Personal Access Token (PAT)** instead of a regular password:
 
-1. Зайдите в настройки GitLab (с компьютера): `Ваша аватарка в правом верхнем углу` -> `Preferences` -> `Access Tokens` (слева в меню).
-2. Нажмите `Add new token`. Назовите его (например, `vps-deploy`), поставьте галочку напротив `read_repository` (или `write_repository`, если сервер будет что-то пушить обратно). Нажмите `Create personal access token`.
-3. Обязательно скопируйте появившийся токен (он начинается с `glpat-...`). Вы его больше не увидите.
+1. Open GitLab settings (from your computer): `your avatar in the top-right corner` → `Preferences` → `Access Tokens` (left menu).
+2. Click `Add new token`. Name it (for example, `vps-deploy`), check `read_repository` (or `write_repository` if the server will push anything back). Click `Create personal access token`.
+3. Copy the token immediately (it starts with `glpat-...`). You will not be able to see it again.
 
-Теперь выполните команду клонирования:
+Then clone the repository:
 
 ```bash
 git clone https://github.com/48bebrikov/YaHo-chat.git
 cd yoho-chat
 ```
 
-Когда Git попросит `Username`, введите ваш логин в GitLab.  
-Когда попросит `Password`, **вставьте ваш скопированный токен** (`glpat-...`) вместо пароля GitHub.
+When Git asks for `Username`, enter your GitLab username.  
+When it asks for `Password`, **paste your copied token** (`glpat-...`) instead of the GitHub password.
 
-### Шаг 2. Создание .env файла
+### Step 2. Create the .env file
 
-Создайте файл `.env` прямо на сервере:
+Create a `.env` file directly on the server:
 
 ```bash
 nano .env
 ```
 
-Вставьте в него ваши ключи (кликните правой кнопкой мыши в PuTTY или используйте Shift+Insert, чтобы вставить текст):
+Paste your keys (right-click in PuTTY or use Shift+Insert to paste):
 
 ```env
-API_ID=ваш_api_id
-API_HASH=ваш_api_hash
-GEMINI_API_KEY=ваш_gemini_ключ
+API_ID=your_api_id
+API_HASH=your_api_hash
+OPENROUTER_API_KEY=your_openrouter_key
+OPENROUTER_MODEL_ID=moonshotai/kimi-k2.8
+BOT_LOCALE=ru
+GEMINI_API_KEY=your_gemini_key
+TTS_VOICE=Achernar
 QDRANT_HOST=qdrant
 QDRANT_PORT=6333
 POLL_INTERVAL_SECONDS=3600
@@ -72,61 +76,67 @@ MONITORED_CHANNELS=telegram,durov
 FRIENDS_LIST=username1,username2
 ```
 
-Сохраните файл (`Ctrl+O`, `Enter`, `Ctrl+X`).
+Save the file (`Ctrl+O`, `Enter`, `Ctrl+X`).
 
-### Шаг 3. Создание файла сессии
+To switch the chat LLM, change `OPENROUTER_MODEL_ID` to any id from [OpenRouter](https://openrouter.ai/models). Chat, tools, memory, and proactive messages all use that value; the fallback default is in `config.py`. Set `BOT_LOCALE` to `en` or `ru` (prompts and fallbacks are in `i18n/`). TTS voice is `TTS_VOICE`; the TTS model is set in `ai/tts.py`. Restart after edits: `docker compose up -d`.
 
-Чтобы Docker-контейнер не выдал ошибку, нужно заранее создать пустой файл для сессии Telethon:
+### Step 3. Create the session file
+
+To keep the Docker container from failing, create an empty Telethon session file in advance:
 
 ```bash
 touch userbot_session.session
 ```
 
-### Шаг 4. Первый запуск и авторизация в Telegram
 
-При первом запуске вам нужно будет ввести номер телефона и код из Telegram. Для этого мы запустим контейнеры **в интерактивном режиме**:
+
+### Step 4. First run and Telegram authorization
+
+On the first run you will need to enter your phone number and the Telegram code. Start the containers **in interactive mode**:
 
 ```bash
 docker compose up --build
 ```
 
-Дождитесь, пока скачаются образы и установятся библиотеки. Когда в консоли появится:
+Wait for the images to download and the libraries to install. When the console shows:
 `Please enter your phone (or bot token):`
 
-1. Введите свой номер телефона (например, `+79991234567`) и нажмите Enter.
-2. Введите код подтверждения, который придет в ваш Telegram аккаунт.
-3. Если у вас стоит облачный пароль (2FA), он попросит ввести и его.
+1. Enter your phone number (for example, `+79991234567`) and press Enter.
+2. Enter the confirmation code sent to your Telegram account.
+3. If you have a cloud password (2FA), it will ask for that as well.
 
-Как только вы увидите сообщение `Userbot started successfully.`, значит всё прошло успешно.
+Once you see `Userbot started successfully.`, the login completed successfully.
 
-### Шаг 5. Запуск бота в фоновом режиме
+### Step 5. Run the bot in the background
 
-Теперь, когда файл `userbot_session.session` заполнен данными для авторизации, можно остановить текущий процесс (нажмите `Ctrl+C` в терминале). 
+After `userbot_session.session` is filled with authorization data, stop the current process (`Ctrl+C` in the terminal).
 
-Запустите контейнеры в фоновом режиме (демон):
+Start the containers in the background (daemon mode):
 
 ```bash
 docker compose up -d
 ```
 
-### Обновление кода на сервере в будущем
 
-Когда вы сделаете изменения у себя на компьютере и отправите их в GitLab (`git push`), код обновится на сервере **АВТОМАТИЧЕСКИ**.
 
-Мы добавили специальную стадию (stage `deploy`) в файл `.gitlab-ci.yml`. Чтобы она заработала, вам нужно один раз настроить переменные CI/CD в вашем GitLab:
+### Updating the code on the server later
 
-1. Зайдите в ваш репозиторий в GitLab через браузер.
-2. Слева в меню выберите **Settings** -> **CI/CD**.
-3. Найдите раздел **Variables** и нажмите **Expand**.
-4. Нажмите кнопку **Add variable** и по очереди добавьте 3 переменные:
+When you change the code on your computer and push it to GitLab (`git push`), the server will update **automatically**.
+
+A `deploy` stage is included in `.gitlab-ci.yml`. To make it work, configure CI/CD variables in GitLab once:
+
+1. Open your GitLab repository in the browser.
+2. In the left menu, choose **Settings** → **CI/CD**.
+3. Find **Variables** and click **Expand**.
+4. Click **Add variable** and add these 3 variables one by one:
   - **Key:** `VPS_IP`  
-   **Value:** `123.45.67.89` (Замените на реальный IP-адрес вашего сервера)
+   **Value:** `123.45.67.89` (replace with your server’s real IP address)
   - **Key:** `SSH_USER`  
-  **Value:** `root` (или имя вашего пользователя на сервере, если вы заходите не под root)
+  **Value:** `root` (or your server username if you do not log in as root)
   - **Key:** `SSH_PRIVATE_KEY`  
-  **Value:** Сюда нужно вставить **приватный** SSH-ключ от вашего сервера (обычно он лежит в файле `~/.ssh/id_rsa`).
-  *Важно: Ключ должен быть с правильными переносами строк, скопируйте его целиком, начиная с `-----BEGIN OPENSSH PRIVATE KEY-----` и заканчивая строкой `-----END OPENSSH PRIVATE KEY-----`.*
+  **Value:** paste the **private** SSH key for your server (usually from `~/.ssh/id_rsa`).
+  *Important: the key must keep its line breaks. Copy it in full, from* `-----BEGIN OPENSSH PRIVATE KEY-----` *through* `-----END OPENSSH PRIVATE KEY-----`*.*
 
-Теперь, если линтинг, сборка и тесты пройдут успешно (зеленая галочка), GitLab Runner (из облака) сам подключится к вашему серверу по SSH, скачает обновления (`git pull`) и перезапустит Docker (`docker compose up -d --build`)!
+After linting, build, and tests succeed (green check), the GitLab Runner (from the cloud) will SSH into your server, pull updates (`git pull`), and restart Docker (`docker compose up -d --build`).
 
-*Если авто-деплой вам не нужен, вы можете просто удалить блок `deploy_to_vps` из файла `.gitlab-ci.yml` и обновлять код на сервере вручную: `git pull origin main` и `docker compose up -d --build`.*
+*If you do not need auto-deploy, you can delete the* `deploy_to_vps` *block from* `.gitlab-ci.yml` *and update the server manually:* `git pull origin main` *and* `docker compose up -d --build`*.*

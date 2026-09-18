@@ -11,7 +11,7 @@ LIMIT_DIALOGUE = 6
 
 
 def format_recent_chat_block(user_id: str, current_message: str, max_lines: int) -> str:
-    """Дословные последние реплики из SQLite + текущее сообщение друга (до max_lines строк)."""
+    """Verbatim recent SQLite turns plus the friend's current message (up to max_lines)."""
     from database.sqlite_db import fetch_previous_friend_messages
 
     n_prev = max(0, max_lines - 1)
@@ -48,7 +48,7 @@ def get_memory_context(
     limit_dialogue: int = LIMIT_DIALOGUE,
 ) -> str:
     """
-    Два независимых поиска по kind: fact и dialogue_snippet, затем объединение по времени.
+    Two independent searches by kind (fact and dialogue_snippet), then merge by time.
     """
     query_embedding = embedder.get_embedding(query)
     facts = qdrant_db.search_similar_by_kind(
@@ -107,7 +107,7 @@ def persist_conversation_turn(
     event_utc_iso: str | None = None,
 ) -> None:
     """
-    Второй вызов Gemini решает, что сохранить; при ответе None — fallback: два dialogue_snippet.
+    A second LLM call decides what to store; on None, fall back to two dialogue_snippet points.
     """
     if sort_ts is None:
         sort_ts = time.time()
@@ -154,7 +154,7 @@ def _fallback_dialogue_pair(
     sort_ts: float,
     event_utc_iso: str,
 ) -> None:
-    """Сохраняет полные реплики как dialogue_snippet (как раньше)."""
+    """Saves full turns as dialogue_snippet (legacy fallback)."""
     um = (user_message or "").strip()
     br = (bot_reply or "").strip()
     if um:

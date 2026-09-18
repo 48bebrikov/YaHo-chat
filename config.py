@@ -16,6 +16,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-3.1-flash-lite")
 TTS_VOICE = os.getenv("TTS_VOICE", "Achernar") # "Aoede", "Callirrhoe", "Kore", "Charon", etc.
 
+# Copy pack for prompts and user-facing lines: "ru" (default) or "en". Packs live in i18n/.
+BOT_LOCALE = os.getenv("BOT_LOCALE", "ru").strip().lower() or "ru"
+
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
 # Qdrant Database

@@ -1,31 +1,27 @@
-# Используем легковесный образ Python
+# Lightweight Python image
 FROM python:3.12-slim
 
-# Устанавливаем рабочую директорию в контейнере
 WORKDIR /app
 
-# Устанавливаем системные зависимости, необходимые для сборки некоторых Python пакетов (например, SQLite, crypto) и ffmpeg для конвертации аудио
+# System packages needed to build some Python wheels (SQLite, crypto) and ffmpeg for audio
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Копируем файл с зависимостями (сначала только его, чтобы использовать кэш слоев Docker)
+# Copy requirements first so Docker can cache the dependency layer
 COPY requirements.txt .
 
-# Устанавливаем Python зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Chromium for browse_url_visual (Playwright PDF)
 RUN python -m playwright install-deps && python -m playwright install chromium
 
-# Предзагружаем модель SentenceTransformer (deepvk), чтобы она не скачивалась каждый раз при запуске контейнера
-# Это делает образ тяжелее, но запуск быстрее и стабильнее
+# Preload the SentenceTransformer (deepvk) so it is not downloaded on every container start.
+# Makes the image larger, but startup is faster and more reliable.
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('deepvk/USER2-base')"
 
-# Копируем остальной код проекта в контейнер
 COPY . .
 
-# Команда для запуска приложения
 CMD ["python", "main.py"]

@@ -1,4 +1,4 @@
-"""Второй вызов LLM: что положить в RAG (facts vs dialogue_snippet)."""
+"""Second LLM call: what to put in RAG (facts vs dialogue_snippet)."""
 
 import json
 import logging
@@ -7,41 +7,9 @@ import re
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from config import OPENROUTER_API_KEY, OPENROUTER_MODEL_ID
+from i18n import get_copy
 
 logger = logging.getLogger(__name__)
-
-MEMORY_EXTRACTOR_SYSTEM = """Ты анализируешь одну пару сообщений в личном чате: реплика друга и твой ответ.
-Реши, что стоит сохранить в долговременную память бота для этого друга.
-
-Типы записей:
-- kind "fact" — устойчивые сведения о друге, его жизни, предпочтениях, планах (город, работа, что любит/не любит). Короткие формулировки, без воды.
-- kind "dialogue_snippet" — важная формулировка из переписки, которую нельзя сжать до факта без потери смысла (договорённость, эмоционально важная фраза, цитата). Можно взять суть из сообщения друга или из твоего ответа.
-
-Правила:
-- Если сообщение пустое, только смайлики/«ок»/«да» без содержания — можно ничего не сохранять (items: []).
-- Не дублируй одно и то же разными формулировками.
-- Не придумывай фактов, которых нет в тексте.
-- Ответ строго JSON без markdown-обёртки."""
-
-MEMORY_EXTRACTOR_USER_TEMPLATE = """Текущее время события (UTC): {event_utc_iso}
-
-Сообщение друга:
-{user_message}
-
-Твой ответ:
-{bot_reply}
-
-Верни JSON вида:
-{{
-  "skip_all": false,
-  "items": [
-    {{"kind": "fact", "text": "...", "source": "user"}},
-    {{"kind": "dialogue_snippet", "text": "...", "source": "bot"}}
-  ]
-}}
-
-source — откуда взята суть: "user" или "bot".
-Если ничего сохранять не нужно: {{"skip_all": true, "items": []}}"""
 
 
 def _parse_json_from_model(text: str) -> dict:
@@ -55,14 +23,15 @@ def _parse_json_from_model(text: str) -> dict:
 
 def extract_memory_items(user_message: str, bot_reply: str, event_utc_iso: str) -> dict | None:
     """
-    Возвращает dict с ключами skip_all, items.
-    При ошибке парсинга/API — None (вызывающий делает fallback).
+    Returns a dict with skip_all and items.
+    On parse/API error — None (caller falls back).
     """
     if not OPENROUTER_API_KEY:
         logger.warning("OPENROUTER_API_KEY missing, skipping memory extraction")
         return None
 
-    user_part = MEMORY_EXTRACTOR_USER_TEMPLATE.format(
+    copy = get_copy()
+    user_part = copy.memory_extractor_user_template.format(
         event_utc_iso=event_utc_iso,
         user_message=user_message or "",
         bot_reply=bot_reply or "",
@@ -79,7 +48,7 @@ def extract_memory_items(user_message: str, bot_reply: str, event_utc_iso: str) 
         )
         
         response = llm.invoke([
-            SystemMessage(content=MEMORY_EXTRACTOR_SYSTEM),
+            SystemMessage(content=copy.memory_extractor_system),
             HumanMessage(content=user_part)
         ])
         
@@ -101,7 +70,7 @@ def extract_memory_items(user_message: str, bot_reply: str, event_utc_iso: str) 
 
 
 def normalize_items(data: dict) -> list[dict]:
-    """Валидирует и ограничивает items."""
+    """Validates and caps items."""
     if data.get("skip_all"):
         return []
     items = data.get("items") or []

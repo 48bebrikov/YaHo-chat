@@ -20,7 +20,7 @@ class QdrantDB:
                 host=QDRANT_HOST, 
                 port=QDRANT_PORT,
                 api_key=QDRANT_API_KEY if QDRANT_API_KEY else None,
-                https=False  # Явно отключаем SSL, так как Qdrant локальный
+                https=False  # local Qdrant, no TLS
             )
             self._ensure_collection()
         return self._client
@@ -46,7 +46,7 @@ class QdrantDB:
         sort_ts: float,
         event_utc_iso: str,
     ):
-        """Одна точка памяти: fact или dialogue_snippet."""
+        """One memory point: fact or dialogue_snippet."""
         point_id = str(uuid.uuid4())
         self.client.upsert(
             collection_name=self.collection_name,
@@ -73,7 +73,7 @@ class QdrantDB:
         kind: str,
         limit: int,
     ):
-        """Поиск по сходству внутри одного kind и user_id."""
+        """Similarity search within one kind and user_id."""
         return self.client.query_points(
             collection_name=self.collection_name,
             query=query_embedding,

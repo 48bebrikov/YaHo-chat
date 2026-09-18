@@ -21,6 +21,7 @@ from config import (
     FRIEND_TYPING_PER_PART_MAX,
 )
 from database.sqlite_db import db_session, UserMetadata
+from i18n import get_copy
 logger = logging.getLogger(__name__)
 
 from collections import defaultdict
@@ -88,8 +89,8 @@ def register_friend_handlers(client, friends_list: list[str]):
 
         user_id = sender_id # consistently use ID for Qdrant storage
         
-        # Сбрасываем статус "печатает", так как пользователь только что отправил сообщение.
-        # Иначе _wait_until_quiet_buffer будет ложно ждать еще 6 секунд после отправки.
+        # Clear typing status: the user just sent a message.
+        # Otherwise _wait_until_quiet_buffer would wait another 6s after send.
         if user_id in user_typing_status:
             user_typing_status[user_id] = 0.0
         
@@ -104,7 +105,7 @@ def register_friend_handlers(client, friends_list: list[str]):
             logger.info("Received a photo, downloading...")
             media_path = await event.download_media(file="database/")
             if not text:
-                text = "[Пользователь прислал фото]"
+                text = get_copy().user_sent_photo
 
         if not text and not media_path:
             return
@@ -146,7 +147,7 @@ async def process_buffered_messages(client, user_id: str):
                 combined_text_parts.append(f"[msg_id: {msg_id}] {m['text']}")
             elif m["media_path"]:
                 msg_id = m["event"].id
-                combined_text_parts.append(f"[msg_id: {msg_id}] [Пользователь прислал медиа]")
+                combined_text_parts.append(f"[msg_id: {msg_id}] {get_copy().user_sent_media}")
                 
         combined_text = "\n".join(combined_text_parts)
         

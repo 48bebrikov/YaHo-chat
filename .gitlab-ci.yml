@@ -8,7 +8,7 @@ variables:
   DOCKER_DRIVER: overlay2
   DOCKER_TLS_CERTDIR: ""
 
-# Стадия линтинга: проверяет синтаксис Python-кода с помощью flake8
+# Lint: Python syntax check with flake8
 flake8:
   stage: lint
   image: python:3.12-slim
@@ -25,7 +25,7 @@ flake8:
 #  script:
 #    - docker build -t $CI_REGISTRY_IMAGE/userbot:latest .
 
-# Стадия тестов: pytest (без импорта chat_engine/rag/embedder — тяжёлые зависимости)
+# Tests: pytest (chat_engine/rag/embedder stay mocked — heavy deps)
 test_imports:
   stage: test
   image: python:3.12-slim
@@ -39,17 +39,17 @@ deploy_to_vps:
   before_script:
     - apk add --no-cache openssh-client
     - eval $(ssh-agent -s)
-    # Добавляем приватный SSH ключ из переменных GitLab
+    # Load the private SSH key from GitLab CI variables
     - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
-    # Добавляем IP сервера в known_hosts, чтобы SSH не спрашивал подтверждение
+    # Add the server IP to known_hosts so SSH does not prompt
     - ssh-keyscan $VPS_IP >> ~/.ssh/known_hosts
     - chmod 644 ~/.ssh/known_hosts
   script:
-    # Копируем файл с переменными из GitLab CI (File variable ENV_FILE) на сервер
+    # Copy the GitLab CI file variable ENV_FILE onto the server
     - scp $ENV_FILE $SSH_USER@$VPS_IP:~/yoho-chat/.env
-    # Подключаемся к серверу, стягиваем новый код и перезапускаем Docker
+    # Pull the new code on the server and restart Docker
     - ssh $SSH_USER@$VPS_IP "cd ~/yoho-chat && git pull origin main && docker compose up -d --build"
   only:
     - main

@@ -12,6 +12,7 @@ from langgraph.prebuilt import ToolNode
 from config import OPENROUTER_API_KEY, OPENROUTER_MODEL_ID
 from ai.tools import search_internet, search_youtube, search_saved_news, browse_url
 from ai.tools_sota import execute_python_code, add_user_reminder
+from i18n import get_copy
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ async def call_model(state: AgentState):
     except Exception as e:
         logger.error(f"Error in LLM call: {e}")
         # Return a fallback message to avoid hanging
-        fallback = AIMessage(content="Прости, что-то с интернетом, не могу ответить.")
+        fallback = AIMessage(content=get_copy().llm_call_fallback)
         return {"messages": [fallback]}
 
 # --- Conditional Edge ---
@@ -189,4 +190,4 @@ async def run_react_agent(system_prompt: str, user_messages: list, user_id: str)
         
     except Exception as e:
         logger.error(f"Failed to run LangGraph agent: {e}")
-        return "Блин, чет интернет отвалился..."
+        return get_copy().agent_run_fallback

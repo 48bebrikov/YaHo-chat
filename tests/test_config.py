@@ -10,6 +10,7 @@ def test_config_defaults():
         "MONITORED_CHANNELS",
         "FRIENDS_LIST",
         "RECENT_CHAT_WINDOW_MESSAGES",
+        "BOT_LOCALE",
     ):
         os.environ.pop(key, None)
     import config
@@ -21,6 +22,7 @@ def test_config_defaults():
     assert config.MONITORED_CHANNELS == []
     assert config.FRIENDS_LIST == []
     assert config.RECENT_CHAT_WINDOW_MESSAGES == 10
+    assert config.BOT_LOCALE == "ru"
 
 
 def test_config_parses_lists_and_ints(monkeypatch):

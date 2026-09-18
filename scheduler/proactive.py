@@ -17,62 +17,8 @@ from config import (
     PROACTIVE_COOLDOWN_HOURS_AFTER_SEND,
 )
 from ai.rag import get_memory_context, format_recent_chat_block
+from i18n import get_copy
 logger = logging.getLogger(__name__)
-
-PROACTIVE_PROMPT_GENERAL = """Ты решаешь, стоит ли проактивно написать другу в Telegram.
-Ты настоящая живая девушка (пиши от женского лица).
-Сейчас НЕТ новых постов из каналов для пересылки (в этот раз ты не можешь переслать новость).
-Контекст:
-- ID пользователя: {user_id}
-- Часов с последнего взаимодействия: {hours_since}
-- Сообщений подряд, отправленных тобой без ответа: {consecutive_messages}
-- Локальная дата и время друга: {friend_local_time}
-- Время UTC: {current_time_utc}
-
-Учти:
-1. Не спамь. Если прошло меньше нескольких часов, скорее всего писать не стоит, если только нет чего-то важного. (Система уже не пингует, если пользователь недавно был активен в переписке).
-2. Если прошел день или больше, можно просто сказать привет.
-3. Если consecutive_messages == 1 и hours_since > 12, ты можешь отправить ОДНО сообщение вроде "ауу", "ты тут?", "игноришь?".
-4. Если consecutive_messages > 0 и hours_since < 12, НЕ ПИШИ им. Если consecutive_messages >= 2, ПРЕКРАТИ ИМ ПИСАТЬ совсем (верни should_message=false). Не будь навязчивой.
-5. Будь естественной, пиши на русском языке от женского лица (например: я пошла, я сделала, и т.д.).
-6. Используй локальное время друга для small talk (утро/вечер/ночь), а не UTC. Не говори, что сейчас "ночь", если у друга утро или день.
-7. Не повторяй одну и ту же фразу для начала разговора из недавних сообщений; меняй формулировки.
-
-Ты должна ответить ТОЛЬКО в формате валидного JSON со следующей структурой:
-{{
-    "should_message": true или false,
-    "message_text": "текст сообщения, если true, или пустая строка, если false",
-    "next_check_hours": целое число (сколько часов подождать до следующей проверки, если false, обычно от 1 до 24)
-}}
-"""
-
-PROACTIVE_PROMPT_WITH_FORWARD = """Ты решаешь, стоит ли пингануть друга, и придумываешь КОРОТКУЮ личную фразу на русском языке от женского лица.
-ВАЖНО: Оригинальный пост из Telegram-канала будет ПЕРЕСЛАН им как есть (тот же канал, ссылка, медиа). Тебе НЕЛЬЗЯ повторять, резюмировать или пересказывать новость — они прочитают сам пост.
-Твоя задача — ТОЛЬКО опциональный комментарий из 1–2 предложений (или пусто, если одной пересылки достаточно), как если бы реальная девушка реагировала на то, чем делится.
-Контекст:
-- ID пользователя: {user_id}
-- Часов с последнего взаимодействия: {hours_since}
-- Сообщений подряд, отправленных тобой без ответа: {consecutive_messages}
-- Превью новости (только для понимания тона, не копируй): {news_preview}
-- Локальная дата и время друга: {friend_local_time}
-- Время UTC: {current_time_utc}
-
-Правила:
-1. Те же анти-спам правила: если consecutive_messages > 0 и hours_since < 12, не пиши. Если consecutive_messages >= 2, верни should_message=false.
-2. message_text должен быть ТОЛЬКО твоей короткой реакцией/комментарием, А НЕ текстом статьи. Пиши от женского лица.
-3. Если одной пересылки достаточно, установи message_text в "".
-4. Используй локальное время друга для учета времени суток (например, утреннее приветствие vs поздний вечер). Не считай UTC их локальной "ночью" или "утром".
-5. Не повторяй одну и ту же фразу для начала разговора из недавних сообщений; меняй формулировки.
-6. КРИТИЧЕСКИ ВАЖНО: Проанализируй интересы пользователя из контекста недавнего разговора (RAG). Если эта конкретная новость НЕ совпадает с их интересами, ты ОБЯЗАНА вернуть should_message=false и установить "news_rejected_uninteresting" в true.
-
-Отвечай ТОЛЬКО в формате валидного JSON:
-{{
-    "should_message": true или false,
-    "news_rejected_uninteresting": true или false,
-    "message_text": "короткий комментарий на русском или пустая строка",
-    "next_check_hours": целое число
-}}
-"""
 
 
 def _proactive_tz() -> ZoneInfo:
@@ -220,9 +166,10 @@ async def check_and_message_friends(client):
                 
                 recent_block = format_recent_chat_block(str(friend_id), "[No new message, deciding if proactive]", 5)
 
+                copy = get_copy()
                 if next_news:
                     preview = (next_news.text or "")[:800]
-                    prompt = PROACTIVE_PROMPT_WITH_FORWARD.format(
+                    prompt = copy.proactive_prompt_with_forward.format(
                         user_id=friend_id,
                         hours_since=hours_since,
                         consecutive_messages=consecutive_messages,
@@ -231,7 +178,7 @@ async def check_and_message_friends(client):
                         current_time_utc=current_time_utc,
                     )
                 else:
-                    prompt = PROACTIVE_PROMPT_GENERAL.format(
+                    prompt = copy.proactive_prompt_general.format(
                         user_id=friend_id,
                         hours_since=hours_since,
                         consecutive_messages=consecutive_messages,
@@ -356,7 +303,7 @@ async def check_and_send_reminders(client):
                 except ValueError:
                     pass
                     
-                msg = f"Напоминание! Ты просил(а) напомнить:\n\n{rem.text}"
+                msg = get_copy().reminder_template.format(text=rem.text)
                 logger.info(f"Sending reminder to {rem.user_id}: {rem.text}")
                 await client.send_message(target, msg)
                 rem.is_sent = 1

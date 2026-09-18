@@ -21,7 +21,7 @@ class NewsCache(Base):
     date_added = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 class FriendChatLog(Base):
-    """Дословный лог личных сообщений user/bot для последних N реплик в промпте (не RAG)."""
+    """Verbatim private-chat log of user/bot turns for the last N lines in the prompt (not RAG)."""
 
     __tablename__ = "friend_chat_log"
 
@@ -121,7 +121,7 @@ def db_session():
 
 
 def append_friend_chat_turn(user_id: str, user_text: str, bot_text: str) -> None:
-    """Добавляет пару реплик (друг → бот) после ответа."""
+    """Appends a friend→bot turn pair after a reply."""
     db = SessionLocal()
     try:
         db.add(FriendChatLog(user_id=user_id, role="user", text=user_text or ""))
@@ -135,7 +135,7 @@ def append_friend_chat_turn(user_id: str, user_text: str, bot_text: str) -> None
 
 
 def fetch_previous_friend_messages(user_id: str, limit: int) -> list[tuple[str, str]]:
-    """Последние `limit` реплик по id (каждая строка — user или bot), по времени снизу вверх → возвращаем в хронологическом порядке."""
+    """Latest `limit` turns by id (each row is user or bot); fetched newest-first, returned chronological."""
     if limit <= 0:
         return []
     db = SessionLocal()

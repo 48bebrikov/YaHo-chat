@@ -9,6 +9,7 @@ import json
 
 from config import OPENROUTER_API_KEY, OPENROUTER_MODEL_ID
 from database.qdrant_db import qdrant_db
+from i18n import get_copy
 
 logger = logging.getLogger(__name__)
 
@@ -38,19 +39,10 @@ def analyze_dialogue(state: MemoryState):
     """Analyzes the latest turn to extract facts and current topic."""
     llm = get_memory_llm()
     
-    prompt = f"""
-    Analyze the following dialogue turn between a user and an AI assistant named Katya.
-    Extract key facts about the user (preferences, job, relationships, plans, mood).
-    Return a JSON object with:
-    1. "facts": a list of string facts (if any, otherwise empty list)
-    2. "topic": a short string describing what they are talking about right now.
-    
-    Dialogue:
-    User: {state['user_message']}
-    Katya: {state['bot_reply']}
-    
-    Output strictly as JSON.
-    """
+    prompt = get_copy().memory_analyze_prompt.format(
+        user_message=state["user_message"],
+        bot_reply=state["bot_reply"],
+    )
     
     try:
         response = llm.invoke([HumanMessage(content=prompt)])

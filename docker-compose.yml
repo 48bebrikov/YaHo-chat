@@ -24,11 +24,11 @@ services:
       - QDRANT_PORT=6333
       - QDRANT_API_KEY=${QDRANT_API_KEY}
     volumes:
-      # Пробрасываем локальную папку database/ внутрь, чтобы сохранить SQLite и файл сессии Telethon при перезапусках контейнера
+      # Persist SQLite and the Telethon session across container restarts
       - ./database:/app/database
       - ./userbot_session.session:/app/userbot_session.session
     restart: unless-stopped
-    # Используем stdin/stdout, так как Telethon при первом запуске требует ввода номера телефона и кода
+    # stdin/stdout: Telethon needs a phone number and code on first login
     stdin_open: true
     tty: true
 
@@ -43,7 +43,7 @@ services:
     image: grafana/grafana:latest
     container_name: yaho_grafana
     ports:
-      # Графану оставляем доступной из интернета, чтобы вы могли смотреть графики по IP:3000
+      # Grafana UI on host:3000
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}

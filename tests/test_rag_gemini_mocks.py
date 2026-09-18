@@ -1,10 +1,11 @@
-"""RAG и generate_reply с моками: без загрузки SentenceTransformer и без Qdrant/Gemini в сети."""
+"""RAG and generate_reply with mocks: no SentenceTransformer load, no live Qdrant/Gemini."""
 
 import sys
 import types
 from unittest.mock import MagicMock, AsyncMock
 
 import pytest
+from i18n import get_copy
 
 
 class _FakePoint:
@@ -16,7 +17,7 @@ class _FakePoint:
 
 @pytest.fixture(scope="module", autouse=True)
 def _stub_embedder_module():
-    """Подменяет ai.embedder до импорта rag, чтобы не тянуть sentence_transformers."""
+    """Stub ai.embedder before importing rag so sentence_transformers is not loaded."""
     for mod in ("ai.chat_engine", "ai.rag", "ai.embedder", "ai.memory_extraction"):
         sys.modules.pop(mod, None)
     fake = types.ModuleType("ai.embedder")
@@ -176,6 +177,7 @@ async def test_generate_reply_builds_prompt_with_context(monkeypatch):
     
     # Assert on the prompt passed to run_react_agent instead of mock_generate_content
     blob = react_args.get("prompt", "")
-    assert "Recent conversation" in blob or "Последнее сообщение друга" in blob
-    assert "долгосрочная память" in blob
+    copy = get_copy()
+    assert "Recent conversation" in blob or "Friend:" in blob
+    assert copy.rag_memory_intro.strip()[:20] in blob
     assert "раньше" in blob and "новое" in blob
